@@ -117,7 +117,7 @@ def generate_handler():
             # Since Python SDK implementation for TTS varies by version, 
             # here is the standard request structure:
             response = client.models.generate_content(
-                model='gemini-2.5-flash-tts', # Ensure you use a model that supports speech generation
+                model='gemini-2.5-flash-preview-tts', # Ensure you use a model that supports speech generation
                 contents=text,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
@@ -146,4 +146,5 @@ def generate_handler():
     except Exception as e:
         print(f"Backend Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
 
