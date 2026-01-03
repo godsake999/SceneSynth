@@ -110,7 +110,6 @@ const encodeWAV = (samples: Float32Array, sampleRate: number) => {
 const getMockStoryPlan = (topic: string): StoryResponse => ({
   title: `Story: ${topic}`,
   outroMessage: "Thanks for watching!",
-  introMusicPrompt: "Upbeat cinematic drums",
   scenes: Array(5).fill(null).map((_, i) => ({
     storyLine: `Scene ${i + 1} script regarding ${topic}.`,
     imagePrompt: `Cinematic shot of ${topic}, scene ${i + 1}`
@@ -150,8 +149,8 @@ export const generateStoryPlan = async (topic: string, style: string): Promise<S
           type: Type.OBJECT,
           properties: {
             title: { type: Type.STRING },
-            introMusicPrompt: { type: Type.STRING },
             outroMessage: { type: Type.STRING },
+            introImagePrompt: { type: Type.STRING },
             scenes: {
               type: Type.ARRAY,
               items: {
@@ -262,31 +261,4 @@ export const generateOutroMessage = async (topic: string): Promise<string> => {
         });
         return response.text?.trim() || "Thanks for watching!";
     }, () => "Subscribe!");
-};
-
-export const generateIntroAudio = async (prompt: string): Promise<string> => {
-    const sampleRate = 44100;
-    const duration = 4.0;
-    const numFrames = sampleRate * duration;
-    const buffer = new Float32Array(numFrames);
-    const p = prompt.toLowerCase();
-    const isDark = p.includes('dark') || p.includes('horror');
-    const isFast = p.includes('action') || p.includes('upbeat');
-    const tempo = isFast ? 8 : 4;
-    const rootFreq = isDark ? 110.0 : 261.63;
-    const scale = isDark ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
-    for (let i = 0; i < numFrames; i++) {
-        const t = i / sampleRate;
-        const noteIdx = Math.floor(t * tempo);
-        const seed = noteIdx * 42 + prompt.length;
-        const scaleDegree = seed % scale.length;
-        const semitones = scale[scaleDegree];
-        const freq = rootFreq * Math.pow(2, semitones/12);
-        const osc = Math.sin(2 * Math.PI * freq * t);
-        const envelope = Math.max(0, 1 - (t * tempo - noteIdx) * 1.5);
-        buffer[i] += osc * envelope * 0.5;
-        if (i > 5000) buffer[i] += buffer[i - 5000] * 0.3;
-    }
-    const wavBuffer = encodeWAV(buffer, sampleRate);
-    return URL.createObjectURL(new Blob([wavBuffer], { type: 'audio/wav' }));
 };

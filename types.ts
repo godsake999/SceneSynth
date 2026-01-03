@@ -14,14 +14,13 @@ export interface Scene {
 
 export interface IntroState {
   title: string;
-  imagePrompt?: string; 
+  imagePrompt: string; 
   imageUrl?: string;
-  musicPrompt?: string; // New: Description of the music
-  musicUrl?: string;    // New: URL of the generated audio
+  audioUrl?: string;
   
   textStatus: 'idle' | 'generating' | 'completed' | 'error';
   imageStatus: 'idle' | 'generating' | 'completed' | 'error';
-  musicStatus?: 'idle' | 'generating' | 'completed' | 'error'; // New
+  audioStatus: 'idle' | 'generating' | 'completed' | 'error';
 }
 
 export interface OutroState {
@@ -35,7 +34,6 @@ export interface StoryResponse {
   title: string;
   outroMessage: string;
   introImagePrompt?: string; 
-  introMusicPrompt?: string; // New: AI suggested music prompt
   scenes: Array<{
     storyLine: string;
     imagePrompt: string;

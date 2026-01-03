@@ -6,8 +6,7 @@ import {
     generateSceneImage, 
     generateSpeech, 
     generateIntroTitle,
-    generateOutroMessage,
-    generateIntroAudio 
+    generateOutroMessage
 } from './services/geminiService';
 import { generateSequentialVideo } from './utils/videoGenerator';
 import { Scene, IntroState, OutroState } from './types';
@@ -19,7 +18,7 @@ const App: React.FC = () => {
   
   // Initial States
   const initialIntro: IntroState = { 
-      title: '', imagePrompt: '', musicPrompt: '', textStatus: 'idle', imageStatus: 'idle', musicStatus: 'idle' 
+      title: '', imagePrompt: '', textStatus: 'idle', imageStatus: 'idle', audioStatus: 'idle' 
   };
   const initialOutro: OutroState = { message: '', textStatus: 'idle', audioStatus: 'idle' };
   const initialScenes: Scene[] = Array.from({ length: 5 }, (_, i) => ({
@@ -33,6 +32,7 @@ const App: React.FC = () => {
   const [jsonContent, setJsonContent] = useState('');
   const [isProducingVideo, setIsProducingVideo] = useState(false);
   const [previewingSceneId, setPreviewingSceneId] = useState<number | null>(null);
+  const [isPreviewingIntro, setIsPreviewingIntro] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [fullMovieUrl, setFullMovieUrl] = useState<string | null>(null);
@@ -94,12 +94,13 @@ const App: React.FC = () => {
       } catch (e: any) { setIntro(prev => ({ ...prev, imageStatus: 'error' })); setError(e.message); }
   };
 
-  const handleGenerateIntroMusic = async () => {
-      setIntro(prev => ({ ...prev, musicStatus: 'generating' }));
+  const handleGenerateIntroAudio = async () => {
+      if (!intro.title) return;
+      setIntro(prev => ({ ...prev, audioStatus: 'generating' }));
       try {
-          const url = await generateIntroAudio(intro.musicPrompt || topic);
-          setIntro(prev => ({ ...prev, musicUrl: url, musicStatus: 'completed' }));
-      } catch (e: any) { setIntro(prev => ({ ...prev, musicStatus: 'error' })); setError(e.message); }
+          const url = await generateSpeech(intro.title);
+          setIntro(prev => ({ ...prev, audioUrl: url, audioStatus: 'completed' }));
+      } catch (e: any) { setIntro(prev => ({ ...prev, audioStatus: 'error' })); setError(e.message); }
   };
 
   const handleGenerateOutroMessage = async () => {
@@ -111,6 +112,7 @@ const App: React.FC = () => {
   };
 
   const handleGenerateOutroAudio = async () => {
+      if (!outro.message) return;
       setOutro(prev => ({ ...prev, audioStatus: 'generating' }));
       try {
           const url = await generateSpeech(outro.message);
@@ -123,7 +125,7 @@ const App: React.FC = () => {
       setError(null);
       try {
           const plan = await generateStoryPlan(topic, style);
-          setIntro(prev => ({ ...prev, title: plan.title, imagePrompt: plan.introImagePrompt || `Title card: ${plan.title}`, musicPrompt: plan.introMusicPrompt, textStatus: 'completed' }));
+          setIntro(prev => ({ ...prev, title: plan.title, imagePrompt: plan.introImagePrompt || `Title card: ${plan.title}`, textStatus: 'completed' }));
           setOutro(prev => ({ ...prev, message: plan.outroMessage, textStatus: 'completed' }));
           setScenes(prev => prev.map((s, i) => ({
               ...s, storyLine: plan.scenes[i]?.storyLine || '', imagePrompt: `${plan.scenes[i].imagePrompt}, ${style} style`, textStatus: 'completed'
@@ -166,13 +168,26 @@ const App: React.FC = () => {
       } catch (e: any) { setError(e.message); } finally { setPreviewingSceneId(null); }
   };
 
+  const handlePreviewIntro = async () => {
+    if (!intro.imageUrl || !intro.audioUrl) return;
+    setIsPreviewingIntro(true);
+    try {
+        const url = await generateSequentialVideo({ 
+            scenes: [],
+            intro: { imageUrl: intro.imageUrl, title: intro.title, audioUrl: intro.audioUrl } 
+        });
+        setFullMovieUrl(url);
+        setIsPlayingMovie(true);
+    } catch (e: any) { setError(e.message); } finally { setIsPreviewingIntro(false); }
+  }
+
   const handleProduceVideo = async () => {
       setIsProducingVideo(true);
       setVideoProgress(0);
       try {
           const url = await generateSequentialVideo({
               scenes,
-              intro: intro.imageUrl ? { imageUrl: intro.imageUrl, title: intro.title, musicUrl: intro.musicUrl } : undefined,
+              intro: intro.imageUrl && intro.audioUrl ? { imageUrl: intro.imageUrl, title: intro.title, audioUrl: intro.audioUrl } : undefined,
               outro: outro.audioUrl ? { audioUrl: outro.audioUrl, message: outro.message } : undefined,
               onProgress: (p) => setVideoProgress(Math.round(p * 100))
           });
@@ -227,29 +242,63 @@ const App: React.FC = () => {
               <textarea value={jsonContent} onChange={(e) => setJsonContent(e.target.value)} className="w-full h-[70vh] bg-slate-900 text-slate-300 font-mono text-sm outline-none resize-none p-4 rounded-xl border border-slate-700" spellCheck={false} />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  <div className="bg-slate-900/50 border border-indigo-500/30 rounded-xl overflow-hidden flex flex-col">
+                  {/* IMPROVED INTRO CARD */}
+                  <div className="bg-slate-900/50 border border-indigo-500/30 rounded-xl overflow-hidden flex flex-col relative">
                       <div className="p-3 bg-indigo-900/20 border-b border-indigo-500/20 flex justify-between items-center"><span className="text-xs font-bold text-indigo-400">INTRO</span></div>
                       <div className="aspect-[9/16] relative bg-black/40 group">
                           {intro.imageUrl ? <img src={intro.imageUrl} className="w-full h-full object-cover" alt="Intro" /> : <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">{intro.imageStatus === 'generating' ? <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full"></div> : <i className="fa-solid fa-film text-4xl opacity-30"></i>}</div>}
                           <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/95 to-transparent flex flex-col gap-2">
                                <input value={intro.title} onChange={e => setIntro({...intro, title: e.target.value})} placeholder="Title" className="w-full bg-transparent text-center font-black text-white text-xl outline-none" />
                           </div>
+                          {intro.imageUrl && intro.audioUrl && (
+                            <button onClick={handlePreviewIntro} className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors opacity-0 group-hover:opacity-100">
+                                <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
+                                    <i className="fa-solid fa-play text-indigo-600 pl-1 text-lg"></i>
+                                </div>
+                            </button>
+                          )}
+                          {isPreviewingIntro && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    <span className="text-[10px] font-bold text-white tracking-widest">RENDERING</span>
+                                </div>
+                            </div>
+                          )}
                       </div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
                           <button onClick={handleGenerateIntroTitle} className="bg-slate-700 text-white text-[10px] py-2 rounded">TITLE</button>
-                          <button onClick={handleGenerateIntroImage} className="bg-indigo-600 text-white text-[10px] py-2 rounded">IMAGE</button>
-                          <button onClick={handleGenerateIntroMusic} className="col-span-2 bg-pink-600 text-white text-[10px] py-2 rounded">STINGER AUDIO</button>
+                          <button onClick={handleGenerateIntroImage} className="bg-indigo-600 text-white text-[10px] py-2 rounded">DRAW</button>
+                          <button 
+                            onClick={handleGenerateIntroAudio} 
+                            disabled={!intro.title || intro.audioStatus === 'generating'} 
+                            className={`col-span-2 text-white text-[10px] py-2 rounded transition-all font-bold ${
+                              intro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                            } disabled:opacity-50`}
+                          >
+                             {intro.audioStatus === 'generating' ? 'GENERATING...' : (intro.audioUrl ? 'REDO VOICE' : 'VOICE TITLE')}
+                          </button>
                       </div>
                   </div>
 
+                  {/* SCENE CARDS */}
                   {scenes.map((scene, idx) => <SceneCard key={scene.id} scene={scene} isPreviewing={previewingSceneId === scene.id} onUpdate={(u) => updateScene(idx, u)} onGenerateScript={() => handleGenerateSceneScript(idx)} onGenerateImage={() => handleGenerateSceneImage(idx)} onGenerateAudio={() => handleGenerateSceneAudio(idx)} onPreview={() => handlePreviewScene(idx)} />)}
                   
+                  {/* OUTRO CARD */}
                   <div className="bg-slate-900/50 border border-emerald-500/30 rounded-xl overflow-hidden flex flex-col">
                       <div className="p-3 bg-emerald-900/20 border-b border-emerald-500/20 flex justify-between items-center"><span className="text-xs font-bold text-emerald-400">OUTRO</span></div>
                       <div className="aspect-[9/16] bg-black/40 flex items-center justify-center p-6"><textarea value={outro.message} onChange={e => setOutro({...outro, message: e.target.value})} placeholder="Closing message..." className="w-full bg-transparent text-center text-white text-lg font-bold outline-none resize-none" rows={4} /></div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
                           <button onClick={handleGenerateOutroMessage} className="bg-slate-700 text-white text-[10px] py-2 rounded">TEXT</button>
-                          <button onClick={handleGenerateOutroAudio} className="bg-emerald-600 text-white text-[10px] py-2 rounded">VOICE</button>
+                          <button 
+                            onClick={handleGenerateOutroAudio} 
+                            disabled={!outro.message || outro.audioStatus === 'generating'}
+                            className={`text-white text-[10px] py-2 rounded transition-all font-bold ${
+                                outro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                            } disabled:opacity-50`}
+                          >
+                             {outro.audioStatus === 'generating' ? 'GENERATING...' : (outro.audioUrl ? 'REDO VOICE' : 'VOICE')}
+                          </button>
                       </div>
                   </div>
               </div>

@@ -6,7 +6,7 @@ interface VideoGeneratorOptions {
   intro?: {
     imageUrl: string;
     title: string;
-    musicUrl?: string; // Added musicUrl support
+    audioUrl?: string; 
   };
   outro?: {
     audioUrl: string;
@@ -22,8 +22,10 @@ export const generateSequentialVideo = async ({
   onProgress
 }: VideoGeneratorOptions): Promise<string> => {
   
+  const hasIntro = !!(intro?.imageUrl && intro?.audioUrl);
   const validScenes = scenes.filter(s => s.imageUrl && s.audioUrl);
-  if (validScenes.length === 0) throw new Error("No valid scenes to generate video");
+  
+  if (validScenes.length === 0 && !hasIntro) throw new Error("No valid intro or scenes to generate video");
 
   await document.fonts.ready;
 
@@ -65,12 +67,9 @@ export const generateSequentialVideo = async ({
   bgmNodes.start();
   
   // MIXING LOGIC: 
-  // If there is intro music, delay BGM fade-in so the intro stinger stands out.
-  // Otherwise, fade in BGM immediately.
-  const hasIntroMusic = !!intro?.musicUrl;
-  const bgmFadeStart = audioContext.currentTime + (hasIntroMusic ? 3.0 : 0.5);
+  const bgmFadeStart = audioContext.currentTime + 0.5;
   bgmNodes.gain.gain.setValueAtTime(0, audioContext.currentTime);
-  bgmNodes.gain.gain.linearRampToValueAtTime(0.10, bgmFadeStart + 2.0); 
+  bgmNodes.gain.gain.linearRampToValueAtTime(0.08, bgmFadeStart + 2.0); 
 
   try {
     // Load all assets
@@ -81,13 +80,11 @@ export const generateSequentialVideo = async ({
     }));
 
     let introImg: HTMLImageElement | null = null;
-    let introMusicBuffer: AudioBuffer | null = null;
+    let introAudioBuffer: AudioBuffer | null = null;
 
-    if (intro) {
+    if (intro && intro.imageUrl && intro.audioUrl) {
       introImg = await loadImage(intro.imageUrl);
-      if (intro.musicUrl) {
-          introMusicBuffer = await loadAudioUniversal(intro.musicUrl, audioContext);
-      }
+      introAudioBuffer = await loadAudioUniversal(intro.audioUrl, audioContext);
     }
 
     let outroBuffer: AudioBuffer | null = null;
@@ -96,16 +93,16 @@ export const generateSequentialVideo = async ({
     }
 
     // Play Intro
-    if (intro && introImg) {
+    if (introImg && introAudioBuffer) {
        await playIntroSegment(
            ctx, 
            dest, 
            audioContext, 
            introImg, 
-           intro.title, 
+           intro!.title, 
            width, 
            height, 
-           introMusicBuffer
+           introAudioBuffer
        );
     }
 
@@ -128,33 +125,31 @@ export const generateSequentialVideo = async ({
 
     // Play Outro
     if (outro && outroBuffer) {
-        const lastImage = loadedAssets[loadedAssets.length - 1].img;
-        const voiceDuration = outroBuffer.duration;
-        const fadeStartTime = audioContext.currentTime + voiceDuration;
-        
-        bgmNodes.gain.gain.setValueAtTime(0.10, fadeStartTime);
-        bgmNodes.gain.gain.linearRampToValueAtTime(0, fadeStartTime + 3);
+        const lastImage = loadedAssets.length > 0 ? loadedAssets[loadedAssets.length - 1].img : (introImg || null);
+        if (lastImage) {
+            const voiceDuration = outroBuffer.duration;
+            const fadeStartTime = audioContext.currentTime + voiceDuration;
+            
+            bgmNodes.gain.gain.setValueAtTime(0.08, fadeStartTime);
+            bgmNodes.gain.gain.linearRampToValueAtTime(0, fadeStartTime + 3);
 
-        await playOutroSegment(
-            ctx, 
-            dest, 
-            audioContext, 
-            lastImage, 
-            outroBuffer, 
-            outro.message, 
-            width, 
-            height,
-            voiceDuration + 4.0 
-        );
+            await playOutroSegment(
+                ctx, 
+                dest, 
+                audioContext, 
+                lastImage, 
+                outroBuffer, 
+                outro.message, 
+                width, 
+                height,
+                voiceDuration + 4.0 
+            );
+        }
     } else {
-        // No outro (e.g., Preview Mode)
-        // Fade out BGM quickly
         const now = audioContext.currentTime;
         bgmNodes.gain.gain.cancelScheduledValues(now);
         bgmNodes.gain.gain.setValueAtTime(bgmNodes.gain.gain.value, now);
         bgmNodes.gain.gain.linearRampToValueAtTime(0, now + 1.0);
-        
-        // Short pause to capture fade
         await new Promise(r => setTimeout(r, 1000));
     }
     
@@ -182,24 +177,21 @@ export const generateSequentialVideo = async ({
 
 const playIntroSegment = (
   ctx: CanvasRenderingContext2D,
-  dest: MediaStreamAudioDestinationNode, // Added
-  audioCtx: AudioContext, // Added
+  dest: MediaStreamAudioDestinationNode,
+  audioCtx: AudioContext,
   image: HTMLImageElement,
   title: string,
   width: number,
   height: number,
-  musicBuffer: AudioBuffer | null // Added
+  audioBuffer: AudioBuffer
 ): Promise<void> => {
   return new Promise((resolve) => {
-    // Play Intro Music if available
-    if (musicBuffer) {
-        const source = audioCtx.createBufferSource();
-        source.buffer = musicBuffer;
-        source.connect(dest);
-        source.start();
-    }
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(dest);
+    source.start();
 
-    const duration = 3.0;
+    const duration = audioBuffer.duration + 0.5; // Small pause
     const startTime = performance.now();
 
     const draw = () => {
@@ -235,12 +227,10 @@ const playIntroSegment = (
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
-      // Shadow
       ctx.shadowColor = "rgba(0,0,0,0.8)";
       ctx.shadowBlur = 20;
       ctx.fillStyle = 'white';
       
-      // Split title if too long
       const words = title.toUpperCase().split(' ');
       const mid = Math.ceil(words.length / 2);
       if (words.length > 3) {
@@ -278,7 +268,6 @@ const playSceneSegment = (
         const duration = audioBuffer.duration;
         const startTime = performance.now();
         
-        // Ken Burns vars
         const zoomAmount = 0.10;
         const seed = text.length; 
         const panX = ((seed % 10) / 10 - 0.5) * 40;
@@ -295,11 +284,9 @@ const playSceneSegment = (
 
             const progress = elapsed / duration;
 
-            // Clear
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, width, height);
 
-            // Ken Burns
             const scale = 1.05 + (zoomAmount * progress); 
             const scaledWidth = width * scale;
             const scaledHeight = height * scale;
@@ -308,7 +295,6 @@ const playSceneSegment = (
 
             ctx.drawImage(image, x, y, scaledWidth, scaledHeight);
 
-            // Subtitles
             drawSimpleSubtitles(ctx, text, width, height);
 
             requestAnimationFrame(draw);
@@ -351,11 +337,9 @@ const playOutroSegment = (
         ctx.globalAlpha = 1.0; 
         ctx.drawImage(image, 0, 0, width, height);
         
-        // Darken
         ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * progress})`;
         ctx.fillRect(0, 0, width, height);
 
-        // Text
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = `bold 40px Inter, sans-serif`;
@@ -409,11 +393,9 @@ const drawSimpleSubtitles = (
   lines.forEach((line, i) => {
       const y = canvasHeight - bottomMargin - ((lines.length - 1 - i) * (fontSize + 12));
       
-      // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.8)';
       ctx.fillText(line, canvasWidth / 2 + 2, y + 2);
       
-      // Main Text
       ctx.fillStyle = '#ffffff';
       ctx.fillText(line, canvasWidth / 2, y);
   });
@@ -429,28 +411,18 @@ const loadImage = (src: string): Promise<HTMLImageElement> => {
   });
 };
 
-// Robust Audio Loader that handles both Raw PCM (Gemini) and Standard Formats (MP3/WAV from Fallbacks)
 const loadAudioUniversal = async (src: string, ctx: AudioContext): Promise<AudioBuffer> => {
   const response = await fetch(src);
   const arrayBuffer = await response.arrayBuffer();
 
-  // Method 1: Try Standard Decode (WAV, MP3, OGG)
-  // We clone the buffer because decodeAudioData detaches/neutures the buffer it processes.
   try {
     const bufferForDecode = arrayBuffer.slice(0);
     return await ctx.decodeAudioData(bufferForDecode);
   } catch (e) {
-    // Method 2: Fallback to Raw PCM (Gemini Specific Format)
-    // If standard decode fails, we assume it's the raw PCM from Gemini which has no header.
     console.warn("Standard audio decode failed, attempting raw PCM parse...", e);
     
-    // Note: Gemini sends 24000Hz, 1 channel, Int16 LE
     const view = new DataView(arrayBuffer);
-    
-    // Check for WAV header manually just in case decodeAudioData failed for other reasons
-    // (RIFF header check)
     if (arrayBuffer.byteLength > 44 && view.getUint32(0) === 0x52494646) {
-        console.error("This appears to be a corrupt WAV file, not raw PCM.");
         throw e;
     }
 
