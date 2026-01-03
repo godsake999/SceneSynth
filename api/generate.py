@@ -1,150 +1,221 @@
 from flask import Flask, request, jsonify
-from google import genai
-from google.genai import types
 import os
 import json
 
+from google import genai
+from google.genai import types
+
 app = Flask(__name__)
 
-# Initialize client with Server-Side Key (from Vercel Env Vars)
-# Note: In Vercel, this automatically reads "API_KEY" or "GEMINI_API_KEY"
+# Initialize Gemini client
 client = genai.Client(api_key=os.environ.get("API_KEY"))
+
 
 @app.route('/api/generate', methods=['POST'])
 def generate_handler():
     try:
-        data = request.get_json()
-        action = data.get('action')
+        body = request.get_json()
+        action = body.get('action')
         
-        if not action:
-            return jsonify({"error": "No action provided"}), 400
+        if action == 'generateStoryPlan':
+            result = generate_story_plan(
+                body.get('topic', ''), 
+                body.get('style', '')
+            )
+        elif action == 'generateSceneImage':
+            result = generate_scene_image(body.get('prompt', ''))
+        elif action == 'generateSingleSceneText':
+            result = generate_single_scene_text(
+                body.get('topic', ''),
+                body.get('sceneIndex', 0),
+                body.get('context', '')
+            )
+        elif action == 'generateIntroTitle':
+            result = generate_intro_title(
+                body.get('topic', ''),
+                body.get('style', '')
+            )
+        elif action == 'generateOutroMessage':
+            result = generate_outro_message(body.get('topic', ''))
+        elif action == 'generateGeminiTTS':
+            result = generate_gemini_tts(body.get('text', ''))
+        else:
+            return jsonify({"error": f"Unknown action: {action}"}), 400
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({"error": str(e), "success": False}), 500
 
-        # --- ACTION 1: Generate Story Plan ---
-        if action == 'story_plan':
-            topic = data.get('topic')
-            style = data.get('style')
-            prompt = f"Create a 5-scene YouTube Short plan. Topic: {topic}. Style: {style}. Return JSON."
-            
-            response = client.models.generate_content(
-                model="gemini-2.0-flash", # or gemini-1.5-flash / gemini-3-flash-preview depending on availability
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema={
-                        "type": "OBJECT",
-                        "properties": {
-                            "title": {"type": "STRING"},
-                            "outroMessage": {"type": "STRING"},
-                            "introImagePrompt": {"type": "STRING"},
-                            "scenes": {
-                                "type": "ARRAY",
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "storyLine": {"type": "STRING"},
-                                        "imagePrompt": {"type": "STRING"}
-                                    }
-                                }
-                            }
-                        }
+
+# ===== STORY PLAN GENERATION =====
+def generate_story_plan(topic: str, style: str) -> dict:
+    prompt = f"Create a 5-scene YouTube Short plan. Topic: {topic}. Style: {style}. Return JSON."
+    
+    schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "title": types.Schema(type=types.Type.STRING),
+            "outroMessage": types.Schema(type=types.Type.STRING),
+            "introImagePrompt": types.Schema(type=types.Type.STRING),
+            "scenes": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "storyLine": types.Schema(type=types.Type.STRING),
+                        "imagePrompt": types.Schema(type=types.Type.STRING),
+                    },
+                    required=["storyLine", "imagePrompt"]
+                )
+            )
+        },
+        required=["title", "outroMessage", "scenes"]
+    )
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        return {
+            "title": topic,
+            "outroMessage": "Thanks for watching!",
+            "introImagePrompt": topic,
+            "scenes": [
+                {"storyLine": f"Scene {i+1} about {topic}", "imagePrompt": topic}
+                for i in range(5)
+            ]
+        }
+
+
+# ===== IMAGE GENERATION =====
+def generate_scene_image(prompt: str) -> dict:
+    full_prompt = f"Cinematic scene: {prompt}, vertical 9:16, high detail, 4k"
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-04-17",
+            contents=full_prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+            )
+        )
+        
+        if response.candidates and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if part.inline_data:
+                    image_data = part.inline_data.data
+                    mime_type = part.inline_data.mime_type
+                    return {
+                        "success": True,
+                        "data": f"data:{mime_type};base64,{image_data}",
+                        "source": "gemini"
                     }
-                )
-            )
-            return jsonify(json.loads(response.text))
+        
+        raise ValueError("No image data in response")
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "source": "fallback_needed"
+        }
 
-        # --- ACTION 2: Generate Scene Image ---
-        elif action == 'scene_image':
-            prompt = data.get('prompt')
-            full_prompt = f"Cinematic scene: {prompt}, vertical 9:16, high detail, 4k"
-            
-            response = client.models.generate_content(
-                model='gemini-2.0-flash', # Use a model that supports image generation
-                contents=full_prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="image/jpeg",
-                    # Add specific image generation params if supported by the specific model version
-                )
-            )
-            
-            # Use the bytes directly if available, or base64 from the response
-            # Note: The Python SDK return structure for images varies by model version.
-            # This is a generic handler for the generated image bytes.
-            if response.bytes:
-                 import base64
-                 b64_string = base64.b64encode(response.bytes).decode('utf-8')
-                 return jsonify({"image_data": f"data:image/jpeg;base64,{b64_string}"})
-            
-            # Fallback for structured response
-            return jsonify({"error": "No image generated"}), 500
 
-        # --- ACTION 3: Generate Single Text Elements (Title/Outro/Single Scene) ---
-        elif action == 'text_only':
-            prompt = data.get('prompt')
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt
+# ===== SINGLE SCENE TEXT =====
+def generate_single_scene_text(topic: str, scene_index: int, context: str) -> dict:
+    schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "storyLine": types.Schema(type=types.Type.STRING),
+            "imagePrompt": types.Schema(type=types.Type.STRING),
+        },
+        required=["storyLine", "imagePrompt"]
+    )
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=f"Write Scene {scene_index} for a video about {topic}. Context: {context}. Return JSON.",
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema
             )
-            return jsonify({"text": response.text.strip()})
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        return {
+            "storyLine": f"Scene {scene_index} about {topic}",
+            "imagePrompt": topic
+        }
 
-        # --- ACTION 4: JSON Text (Single Scene) ---
-        elif action == 'single_scene_json':
-            prompt = data.get('prompt')
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema={
-                        "type": "OBJECT",
-                        "properties": {
-                            "storyLine": {"type": "STRING"},
-                            "imagePrompt": {"type": "STRING"}
-                        }
-                    }
-                )
-            )
-            return jsonify(json.loads(response.text))
-# --- ACTION 5: Gemini TTS (Tier 3 Fallback) ---
-        elif action == 'tts_gemini':
-            text = data.get('text')
-            voice_name = data.get('voice', 'Kore') # Default Gemini voice
-            
-            # Using the new Google GenAI SDK for Python
-            # Note: The model name for TTS is often 'models/gemini-2.0-flash-exp' or specific TTS endpoints
-            # For safety, let's use the standard generate_content if the model supports audio, 
-            # OR use the specific speech endpoint if available in your SDK version.
-            
-            # Since Python SDK implementation for TTS varies by version, 
-            # here is the standard request structure:
-            response = client.models.generate_content(
-                model='gemini-2.5-flash-preview-tts', # Ensure you use a model that supports speech generation
-                contents=text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_name
-                            )
+
+# ===== INTRO TITLE =====
+def generate_intro_title(topic: str, style: str) -> dict:
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=f"One short catchy title for a video about {topic}. Text only."
+        )
+        title = response.text.strip() if response.text else topic
+        return {"title": title}
+    except Exception as e:
+        return {"title": topic}
+
+
+# ===== OUTRO MESSAGE =====
+def generate_outro_message(topic: str) -> dict:
+    try:
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=f"One short outro CTA for {topic}. Text only."
+        )
+        message = response.text.strip() if response.text else "Thanks for watching!"
+        return {"message": message}
+    except Exception as e:
+        return {"message": "Thanks for watching!"}
+
+
+# ===== GEMINI TTS =====
+def generate_gemini_tts(text: str) -> dict:
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-preview-tts",
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name="Kore"
                         )
                     )
                 )
             )
-            
-            # Extract audio bytes
-            # The structure depends on the response, usually inside parts
-            for part in response.candidates[0].content.parts:
-                if part.inline_data:
-                    import base64
-                    # Return as Base64 JSON so frontend can play it
-                    b64_data = base64.b64encode(part.inline_data.data).decode('utf-8')
-                    return jsonify({"audio_data": f"data:audio/mp3;base64,{b64_data}"})
-            
-            return jsonify({"error": "No audio generated"}), 500
-        return jsonify({"error": "Invalid action"}), 400
-
+        )
+        
+        if response.candidates and response.candidates[0].content.parts:
+            audio_data = response.candidates[0].content.parts[0].inline_data.data
+            mime_type = response.candidates[0].content.parts[0].inline_data.mime_type
+            return {
+                "success": True,
+                "audio": audio_data,
+                "mimeType": mime_type or "audio/pcm;rate=24000",
+                "source": "gemini"
+            }
+        
+        raise ValueError("No audio data in response")
+        
     except Exception as e:
-        print(f"Backend Error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-
+        return {
+            "success": False,
+            "error": str(e),
+            "source": "failed"
+        }
