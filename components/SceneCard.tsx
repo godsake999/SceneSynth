@@ -30,6 +30,19 @@ const SceneCard: React.FC<SceneCardProps> = ({
   const isLoadingText = scene.textStatus === 'generating';
   const isLoadingAudio = scene.audioStatus === 'generating';
 
+  const getAudioSourceLabel = () => {
+    if (scene.audioSource === 'edge') return 'Edge';
+    if (scene.audioSource === 'gemini') return 'Gemini';
+    if (scene.audioSource === 'fallback') return 'SoT';
+    return '';
+  };
+
+  const getAudioColorClass = () => {
+    if (scene.audioSource === 'edge') return 'bg-cyan-500/90';
+    if (scene.audioSource === 'gemini') return 'bg-green-500/90';
+    return 'bg-amber-500/90';
+  };
+
   return (
     <div className="flex flex-col bg-slate-800 rounded-xl overflow-hidden shadow-xl border border-slate-700">
       {/* Visual Area (9:16) */}
@@ -63,7 +76,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
         
         {/* Audio Indicator */}
         {hasAudio && (
-            <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-lg ${scene.audioSource === 'gemini' ? 'bg-green-500/90' : 'bg-amber-500/90'}`}>
+            <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-lg ${getAudioColorClass()}`}>
                 <i className="fa-solid fa-volume-high text-[10px] text-white"></i>
             </div>
         )}
@@ -158,7 +171,7 @@ const SceneCard: React.FC<SceneCardProps> = ({
                     <i className={`fa-solid ${hasAudio ? 'fa-rotate' : 'fa-microphone'}`}></i>
                     {isLoadingAudio ? "Generating..." : (hasAudio ? "Redo Voice" : "Voice")}
                 </div>
-                {hasAudio && <span className="text-[7px] opacity-60 uppercase">{scene.audioSource === 'fallback' ? 'SoT' : 'Gemini'}</span>}
+                {hasAudio && <span className="text-[7px] opacity-60 uppercase">{getAudioSourceLabel()}</span>}
             </button>
         </div>
 

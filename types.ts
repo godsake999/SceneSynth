@@ -1,5 +1,5 @@
 
-export type GenerationSource = 'gemini' | 'fallback' | 'none';
+export type GenerationSource = 'gemini' | 'fallback' | 'edge' | 'none';
 export type GenerationStrategy = 'smart' | 'force-fallback' | 'gemini-only';
 
 export interface Scene {

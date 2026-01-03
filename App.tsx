@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
     generateStoryPlan, 
@@ -204,13 +203,20 @@ const App: React.FC = () => {
 
   const isReadyToProduce = scenes.every(s => s.imageUrl && s.audioUrl); 
 
+  const getAudioLabel = (source: string) => {
+      if (source === 'edge') return 'EDGE';
+      if (source === 'gemini') return 'GEMINI';
+      if (source === 'fallback') return 'SOT';
+      return '';
+  }
+
   return (
     <div className="min-h-screen pb-40 bg-[#0f172a] text-slate-100 font-sans">
         <div className="sticky top-0 z-50 bg-[#0f172a]/80 backdrop-blur border-b border-slate-800">
             <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <h1 className="font-bold text-xl tracking-tight">SceneSynth<span className="text-blue-500">AI</span></h1>
-                    <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 text-[10px] font-bold rounded border border-blue-500/20 uppercase tracking-widest">Free Mode</span>
+                    <span className="px-2 py-0.5 bg-cyan-500/10 text-cyan-400 text-[10px] font-bold rounded border border-cyan-500/20 uppercase tracking-widest">Edge Enabled</span>
                 </div>
                 <div className="flex items-center gap-2">
                    <button onClick={handleNewStory} className="bg-slate-800 hover:bg-red-900/20 text-slate-300 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 transition-all">New Project</button>
@@ -225,7 +231,7 @@ const App: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                       <div className="md:col-span-5">
                           <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Story Topic</label>
-                          <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="A lone astronaut discovers an ancient temple on Mars..." className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none" />
+                          <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="Enter a story concept..." className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none" />
                       </div>
                       <div className="md:col-span-3">
                            <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Visual Style</label>
@@ -237,7 +243,7 @@ const App: React.FC = () => {
                            <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Model Strategy</label>
                            <select value={strategy} onChange={e => setStrategy(e.target.value as GenerationStrategy)} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-3 outline-none text-[10px] font-bold">
                               <option value="smart">SMART (AUTO)</option>
-                              <option value="force-fallback">FORCE FALLBACK</option>
+                              <option value="force-fallback">FORCE FREE</option>
                               <option value="gemini-only">GEMINI ONLY</option>
                            </select>
                       </div>
@@ -256,20 +262,20 @@ const App: React.FC = () => {
               <textarea value={jsonContent} onChange={(e) => setJsonContent(e.target.value)} className="w-full h-[70vh] bg-slate-900 text-slate-300 font-mono text-sm outline-none resize-none p-4 rounded-xl border border-slate-700" spellCheck={false} />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                  {/* IMPROVED INTRO CARD */}
-                  <div className="bg-slate-900/50 border border-indigo-500/30 rounded-xl overflow-hidden flex flex-col relative">
+                  {/* INTRO CARD */}
+                  <div className="bg-slate-900/50 border border-indigo-500/30 rounded-xl overflow-hidden flex flex-col relative shadow-2xl">
                       <div className="p-3 bg-indigo-900/20 border-b border-indigo-500/20 flex justify-between items-center">
                           <span className="text-xs font-bold text-indigo-400">INTRO</span>
-                          {intro.imageSource !== 'none' && (
-                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${intro.imageSource === 'gemini' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
-                                  {intro.imageSource === 'gemini' ? 'Gemini' : 'Flux'}
+                          {intro.audioSource !== 'none' && (
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${intro.audioSource === 'edge' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                  {getAudioLabel(intro.audioSource)}
                               </span>
                           )}
                       </div>
                       <div className="aspect-[9/16] relative bg-black/40 group">
                           {intro.imageUrl ? <img src={intro.imageUrl} className="w-full h-full object-cover" alt="Intro" /> : <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">{intro.imageStatus === 'generating' ? <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full"></div> : <i className="fa-solid fa-film text-4xl opacity-30"></i>}</div>}
                           <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/95 to-transparent flex flex-col gap-2">
-                               <input value={intro.title} onChange={e => setIntro({...intro, title: e.target.value})} placeholder="Title" className="w-full bg-transparent text-center font-black text-white text-xl outline-none" />
+                               <input value={intro.title} onChange={e => setIntro({...intro, title: e.target.value})} placeholder="Title" className="w-full bg-transparent text-center font-black text-white text-xl outline-none drop-shadow-lg" />
                           </div>
                           {intro.imageUrl && intro.audioUrl && (
                             <button onClick={handlePreviewIntro} className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors opacity-0 group-hover:opacity-100">
@@ -280,8 +286,8 @@ const App: React.FC = () => {
                           )}
                       </div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
-                          <button onClick={handleGenerateIntroTitle} className="bg-slate-700 text-white text-[10px] py-2 rounded">TITLE</button>
-                          <button onClick={handleGenerateIntroImage} className="bg-indigo-600 text-white text-[10px] py-2 rounded">DRAW</button>
+                          <button onClick={handleGenerateIntroTitle} className="bg-slate-700 text-white text-[10px] py-2 rounded font-bold hover:bg-slate-600">TITLE</button>
+                          <button onClick={handleGenerateIntroImage} className="bg-indigo-600 text-white text-[10px] py-2 rounded font-bold hover:bg-indigo-500">DRAW</button>
                           <button 
                             onClick={handleGenerateIntroAudio} 
                             disabled={!intro.title || intro.audioStatus === 'generating'} 
@@ -289,7 +295,7 @@ const App: React.FC = () => {
                               intro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
                             } disabled:opacity-50`}
                           >
-                             {intro.audioStatus === 'generating' ? 'GENERATING...' : (intro.audioUrl ? `REDO VOICE (${intro.audioSource === 'gemini' ? 'GEM' : 'FALL'})` : 'VOICE TITLE')}
+                             {intro.audioStatus === 'generating' ? 'GENERATING...' : (intro.audioUrl ? `REDO VOICE (${getAudioLabel(intro.audioSource)})` : 'VOICE TITLE')}
                           </button>
                       </div>
                   </div>
@@ -298,18 +304,18 @@ const App: React.FC = () => {
                   {scenes.map((scene, idx) => <SceneCard key={scene.id} scene={scene} isPreviewing={previewingSceneId === scene.id} onUpdate={(u) => updateScene(idx, u)} onGenerateScript={() => handleGenerateSceneScript(idx)} onGenerateImage={() => handleGenerateSceneImage(idx)} onGenerateAudio={() => handleGenerateSceneAudio(idx)} onPreview={() => handlePreviewScene(idx)} />)}
                   
                   {/* OUTRO CARD */}
-                  <div className="bg-slate-900/50 border border-emerald-500/30 rounded-xl overflow-hidden flex flex-col">
+                  <div className="bg-slate-900/50 border border-emerald-500/30 rounded-xl overflow-hidden flex flex-col shadow-2xl">
                       <div className="p-3 bg-emerald-900/20 border-b border-emerald-500/20 flex justify-between items-center">
                           <span className="text-xs font-bold text-emerald-400">OUTRO</span>
                           {outro.audioSource !== 'none' && (
-                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${outro.audioSource === 'gemini' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
-                                  {outro.audioSource === 'gemini' ? 'Gemini' : 'SoT'}
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${outro.audioSource === 'edge' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-blue-500/20 text-blue-400'}`}>
+                                  {getAudioLabel(outro.audioSource)}
                               </span>
                           )}
                       </div>
                       <div className="aspect-[9/16] bg-black/40 flex items-center justify-center p-6"><textarea value={outro.message} onChange={e => setOutro({...outro, message: e.target.value})} placeholder="Closing message..." className="w-full bg-transparent text-center text-white text-lg font-bold outline-none resize-none" rows={4} /></div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
-                          <button onClick={handleGenerateOutroMessage} className="bg-slate-700 text-white text-[10px] py-2 rounded">TEXT</button>
+                          <button onClick={handleGenerateOutroMessage} className="bg-slate-700 text-white text-[10px] py-2 rounded font-bold hover:bg-slate-600">TEXT</button>
                           <button 
                             onClick={handleGenerateOutroAudio} 
                             disabled={!outro.message || outro.audioStatus === 'generating'}
@@ -317,7 +323,7 @@ const App: React.FC = () => {
                                 outro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
                             } disabled:opacity-50`}
                           >
-                             {outro.audioStatus === 'generating' ? 'GENERATING...' : (outro.audioUrl ? `REDO VOICE (${outro.audioSource === 'gemini' ? 'GEM' : 'FALL'})` : 'VOICE')}
+                             {outro.audioStatus === 'generating' ? 'GENERATING...' : (outro.audioUrl ? `REDO VOICE (${getAudioLabel(outro.audioSource)})` : 'VOICE')}
                           </button>
                       </div>
                   </div>
@@ -331,7 +337,7 @@ const App: React.FC = () => {
                            <div className="text-xs text-slate-400"><span className="font-bold text-white">{scenes.filter(s => s.imageUrl && s.audioUrl).length} / {scenes.length}</span> Scenes Ready</div>
                            {isProducingVideo && <div className="w-32 h-2 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-blue-500 transition-all" style={{width: `${videoProgress}%`}}></div></div>}
                       </div>
-                      <button onClick={handleProduceVideo} disabled={!isReadyToProduce || isProducingVideo} className={`px-8 py-3 rounded-xl font-bold text-sm transition-all ${isReadyToProduce ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-105' : 'bg-slate-800 text-slate-500'}`}>
+                      <button onClick={handleProduceVideo} disabled={!isReadyToProduce || isProducingVideo} className={`px-8 py-3 rounded-xl font-bold text-sm transition-all ${isReadyToProduce ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:scale-105 shadow-lg shadow-indigo-900/40' : 'bg-slate-800 text-slate-500'}`}>
                           {isProducingVideo ? `RENDERING ${videoProgress}%` : 'PRODUCE FULL MOVIE'}
                       </button>
                   </div>

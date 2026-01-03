@@ -1,0 +1,4 @@
+
+flask
+edge-tts
+flask-cors
