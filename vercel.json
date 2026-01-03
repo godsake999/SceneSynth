@@ -7,8 +7,7 @@
   },
   "rewrites": [
     {
-      "source": "/api/tts",
-      "destination": "/api/tts.py"
-    }
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
   ]
 }
