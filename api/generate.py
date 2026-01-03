@@ -104,9 +104,46 @@ def generate_handler():
                 )
             )
             return jsonify(json.loads(response.text))
-
+# --- ACTION 5: Gemini TTS (Tier 3 Fallback) ---
+        elif action == 'tts_gemini':
+            text = data.get('text')
+            voice_name = data.get('voice', 'Kore') # Default Gemini voice
+            
+            # Using the new Google GenAI SDK for Python
+            # Note: The model name for TTS is often 'models/gemini-2.0-flash-exp' or specific TTS endpoints
+            # For safety, let's use the standard generate_content if the model supports audio, 
+            # OR use the specific speech endpoint if available in your SDK version.
+            
+            # Since Python SDK implementation for TTS varies by version, 
+            # here is the standard request structure:
+            response = client.models.generate_content(
+                model='gemini-2.5-flash-tts', # Ensure you use a model that supports speech generation
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name
+                            )
+                        )
+                    )
+                )
+            )
+            
+            # Extract audio bytes
+            # The structure depends on the response, usually inside parts
+            for part in response.candidates[0].content.parts:
+                if part.inline_data:
+                    import base64
+                    # Return as Base64 JSON so frontend can play it
+                    b64_data = base64.b64encode(part.inline_data.data).decode('utf-8')
+                    return jsonify({"audio_data": f"data:audio/mp3;base64,{b64_data}"})
+            
+            return jsonify({"error": "No audio generated"}), 500
         return jsonify({"error": "Invalid action"}), 400
 
     except Exception as e:
         print(f"Backend Error: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
