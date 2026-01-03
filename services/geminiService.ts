@@ -19,15 +19,13 @@ const callBackend = async (payload: any) => {
   return await response.json();
 };
 
-// --- FALLBACK IMAGE SERVICE (Kept on Frontend for speed/reliability) ---
+// --- IMAGE SERVICE (Frontend Fallback + Backend Gemini) ---
 const generateFluxImage = async (prompt: string): Promise<string> => {
   console.warn("Using Flux fallback for image...");
   try {
     const cleanPrompt = prompt.replace(/[^\w\s,]/gi, '');
     const encodedPrompt = encodeURIComponent(cleanPrompt + ", cinematic, 8k, highly detailed");
     const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=720&height=1280&model=flux&nologo=true&seed=${Math.floor(Math.random() * 1000)}`;
-    
-    // Validate it loads
     const response = await fetch(url);
     if (!response.ok) throw new Error("Flux Failed");
     const blob = await response.blob();
@@ -37,55 +35,121 @@ const generateFluxImage = async (prompt: string): Promise<string> => {
   }
 };
 
-// --- CORE SERVICES ---
-
-export const generateStoryPlan = async (topic: string, style: string): Promise<StoryResponse> => {
-  try {
-    // Call Python Backend
-    const result = await callBackend({
-      action: 'story_plan',
-      topic,
-      style
-    });
-    return result as StoryResponse;
-  } catch (e) {
-    console.error("Story Plan Failed", e);
-    // Basic Client-Side Fallback if backend dies
-    return {
-        title: topic,
-        outroMessage: "Thanks for watching!",
-        introImagePrompt: topic + " concept art",
-        scenes: Array(5).fill(0).map((_, i) => ({ 
-            storyLine: `Scene ${i+1} about ${topic}`, 
-            imagePrompt: topic 
-        }))
-    };
-  }
-};
-
 export const generateSceneImage = async (prompt: string, strategy: GenerationStrategy = 'smart'): Promise<GenerationResult<string>> => {
-  // 1. Force Fallback Strategy
   if (strategy === 'force-fallback') {
     return { data: await generateFluxImage(prompt), source: 'fallback' };
   }
-
-  // 2. Try Backend Gemini
   try {
-    const result = await callBackend({
-      action: 'scene_image',
-      prompt
-    });
-    
-    if (result.image_data) {
-        return { data: result.image_data, source: 'gemini' };
-    }
-    throw new Error("No image data in response");
-
+    const result = await callBackend({ action: 'scene_image', prompt });
+    if (result.image_data) return { data: result.image_data, source: 'gemini' };
+    throw new Error("No image data");
   } catch (e) {
-    // 3. Auto-Fallback to Flux
     console.warn("Backend Image Gen failed, switching to Flux", e);
     return { data: await generateFluxImage(prompt), source: 'fallback' };
   }
+};
+
+// --- TTS SERVICES (The Fixed Tiers) ---
+
+/**
+ * Tier 1: Edge TTS (Your /api/tts.py)
+ */
+const generateEdgeTTS = async (text: string): Promise<string> => {
+  console.log("Tier 1: Edge TTS");
+  const response = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice: "en-US-ChristopherNeural" })
+  });
+  if (!response.ok) throw new Error("Edge TTS API Unavailable");
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+};
+
+/**
+ * Tier 2: Sound of Text (Google Translate Client-Side)
+ */
+const generateSoundOfTextTTS = async (text: string): Promise<string> => {
+  console.log("Tier 2: Sound of Text");
+  const createResponse = await fetch('https://api.soundoftext.com/sounds', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ engine: 'Google', data: { text: text.slice(0, 200), voice: 'en-US' } })
+  });
+  if (!createResponse.ok) throw new Error("SoT Init Failed");
+  const { id } = await createResponse.json();
+
+  let attempts = 0;
+  while (attempts < 10) { // Reduced wait time for faster failover
+    await new Promise(r => setTimeout(r, 500));
+    const checkResponse = await fetch(`https://api.soundoftext.com/sounds/${id}`);
+    const checkData = await checkResponse.json();
+    if (checkData.status === 'Done') {
+      const audioRes = await fetch(checkData.location);
+      const blob = await audioRes.blob();
+      return URL.createObjectURL(blob);
+    }
+    attempts++;
+  }
+  throw new Error("SoT Timeout");
+};
+
+/**
+ * Tier 3: Gemini TTS (Via your Backend)
+ */
+const generateGeminiTTS = async (text: string): Promise<string> => {
+  console.log("Tier 3: Gemini TTS (Backend)");
+  // We call the backend now, because frontend doesn't have the API KEY
+  const result = await callBackend({ 
+    action: 'tts_gemini', 
+    text: text,
+    voice: 'Kore' 
+  });
+  
+  if (result.audio_data) {
+     return result.audio_data; // This is a data:audio/mp3;base64 string
+  }
+  throw new Error("Backend Gemini TTS Failed");
+};
+
+// --- EXPORTED TTS FUNCTION ---
+export const generateSpeech = async (text: string, strategy: GenerationStrategy = 'smart'): Promise<GenerationResult<string>> => {
+  // Step 1: Edge TTS (Primary)
+  try {
+    const url = await generateEdgeTTS(text);
+    return { data: url, source: 'edge' };
+  } catch (err) {
+    console.warn("Edge TTS failed, trying Tier 2...", err);
+    
+    // Step 2: Sound of Text (Fallback 1)
+    try {
+      const url = await generateSoundOfTextTTS(text);
+      return { data: url, source: 'fallback' };
+    } catch (err2) {
+      console.warn("SoT failed, trying Tier 3...", err2);
+      
+      // Step 3: Gemini TTS (Fallback 2 - Backend)
+      try {
+        const url = await generateGeminiTTS(text);
+        return { data: url, source: 'gemini' };
+      } catch (err3) {
+        console.error("All TTS engines failed.", err3);
+        // Emergency Fallback: Return empty or placeholder if absolutely necessary
+        throw new Error("All TTS systems offline.");
+      }
+    }
+  }
+};
+
+// --- OTHER SERVICES (Story, Title, etc) ---
+// These use the backend helper properly now
+export const generateStoryPlan = async (topic: string, style: string): Promise<StoryResponse> => {
+    try {
+        const result = await callBackend({ action: 'story_plan', topic, style });
+        return result as StoryResponse;
+    } catch (e) {
+        return { title: topic, outroMessage: "Thanks!", introImagePrompt: topic, scenes: [] };
+    }
 };
 
 export const generateSingleSceneText = async (topic: string, sceneIndex: number, context: string): Promise<{storyLine: string, imagePrompt: string}> => {
@@ -96,44 +160,11 @@ export const generateSingleSceneText = async (topic: string, sceneIndex: number,
 };
 
 export const generateIntroTitle = async (topic: string, style: string): Promise<string> => {
-    const result = await callBackend({
-        action: 'text_only',
-        prompt: `One short catchy title for a video about ${topic}. Text only.`
-    });
+    const result = await callBackend({ action: 'text_only', prompt: `Short title for ${topic}` });
     return result.text || topic;
 };
 
 export const generateOutroMessage = async (topic: string): Promise<string> => {
-    const result = await callBackend({
-        action: 'text_only',
-        prompt: `One short outro CTA for ${topic}. Text only.`
-    });
-    return result.text || "Thanks for watching!";
-};
-
-// --- TTS SERVICES (Delegates to your existing /api/tts endpoint) ---
-// (Copy your generateSpeech function from the previous version here)
-// It doesn't need to change because it already calls fetch('/api/tts')
-export const generateSpeech = async (text: string, strategy: GenerationStrategy = 'smart'): Promise<GenerationResult<string>> => {
-    // ... paste your existing generateSpeech logic here ...
-    // Note: Since generateSpeech already calls /api/tts (which is python), 
-    // it effectively is already "Option 2" compliant!
-    
-    // Just ensure callBackend isn't used here unless you merge tts.py into generate.py
-    // (Keeping them separate files is fine and cleaner).
-    
-    // Simplified stub for context:
-    try {
-        const response = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice: "en-US-ChristopherNeural" })
-        });
-        if(!response.ok) throw new Error("TTS Failed");
-        const blob = await response.blob();
-        return { data: URL.createObjectURL(blob), source: 'edge' };
-    } catch(e) {
-        // Fallback logic...
-        return { data: "", source: 'fallback' };
-    }
+    const result = await callBackend({ action: 'text_only', prompt: `Outro CTA for ${topic}` });
+    return result.text || "Subscribe!";
 };
