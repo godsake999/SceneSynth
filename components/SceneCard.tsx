@@ -52,18 +52,23 @@ const SceneCard: React.FC<SceneCardProps> = ({
         )}
 
         {/* Scene Badge */}
-        <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded border border-white/10">
+        <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded border border-white/10 flex items-center gap-2">
           SCENE {scene.id}
+          {hasImage && (
+              <span className={`text-[8px] px-1 rounded uppercase ${scene.imageSource === 'gemini' ? 'bg-blue-500/80 text-white' : 'bg-purple-500/80 text-white'}`}>
+                  {scene.imageSource === 'gemini' ? 'Gemini' : 'Flux'}
+              </span>
+          )}
         </div>
         
         {/* Audio Indicator */}
         {hasAudio && (
-            <div className="absolute top-3 right-3 bg-green-500/90 text-white w-6 h-6 rounded-full flex items-center justify-center shadow-lg">
-                <i className="fa-solid fa-volume-high text-[10px]"></i>
+            <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-lg ${scene.audioSource === 'gemini' ? 'bg-green-500/90' : 'bg-amber-500/90'}`}>
+                <i className="fa-solid fa-volume-high text-[10px] text-white"></i>
             </div>
         )}
 
-        {/* Preview Overlay Button (Only appears when ready) */}
+        {/* Preview Overlay Button */}
         {isReadyToPreview && !isPreviewing && (
              <button 
                 onClick={onPreview}
@@ -91,11 +96,11 @@ const SceneCard: React.FC<SceneCardProps> = ({
         {/* Script Section */}
         <div className="space-y-1">
              <div className="flex justify-between items-center mb-1">
-                 <label className="text-[10px] uppercase text-slate-500 font-bold">Storyline (Audio Script)</label>
+                 <label className="text-[10px] uppercase text-slate-500 font-bold">Storyline</label>
                  <button 
                     onClick={onGenerateScript}
                     disabled={isLoadingText}
-                    className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                    className="text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50 font-bold"
                  >
                     <i className="fa-solid fa-wand-magic-sparkles mr-1"></i>
                     {isLoadingText ? "Writing..." : (hasText ? "Rewrite" : "Write")}
@@ -127,31 +132,37 @@ const SceneCard: React.FC<SceneCardProps> = ({
             <button
                 onClick={onGenerateImage}
                 disabled={!scene.imagePrompt || isLoadingImage}
-                className={`flex items-center justify-center gap-1.5 py-2 rounded text-[10px] font-bold transition-all ${
+                className={`flex flex-col items-center justify-center py-2 rounded text-[9px] font-bold transition-all ${
                     hasImage 
                     ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' 
                     : 'bg-indigo-600 text-white hover:bg-indigo-500'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-                <i className={`fa-solid ${hasImage ? 'fa-rotate' : 'fa-paintbrush'}`}></i>
-                {isLoadingImage ? "Generating..." : (hasImage ? "Redraw" : "Draw")}
+                <div className="flex items-center gap-1.5 mb-0.5">
+                    <i className={`fa-solid ${hasImage ? 'fa-rotate' : 'fa-paintbrush'}`}></i>
+                    {isLoadingImage ? "Generating..." : (hasImage ? "Redraw" : "Draw")}
+                </div>
+                {hasImage && <span className="text-[7px] opacity-60 uppercase">{scene.imageSource}</span>}
             </button>
 
             <button
                 onClick={onGenerateAudio}
                 disabled={!hasText || isLoadingAudio}
-                className={`flex items-center justify-center gap-1.5 py-2 rounded text-[10px] font-bold transition-all ${
+                className={`flex flex-col items-center justify-center py-2 rounded text-[9px] font-bold transition-all ${
                     hasAudio 
                     ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' 
                     : 'bg-emerald-600 text-white hover:bg-emerald-500'
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-                <i className={`fa-solid ${hasAudio ? 'fa-rotate' : 'fa-microphone'}`}></i>
-                {isLoadingAudio ? "Generating..." : (hasAudio ? "Redo Voice" : "Voice")}
+                <div className="flex items-center gap-1.5 mb-0.5">
+                    <i className={`fa-solid ${hasAudio ? 'fa-rotate' : 'fa-microphone'}`}></i>
+                    {isLoadingAudio ? "Generating..." : (hasAudio ? "Redo Voice" : "Voice")}
+                </div>
+                {hasAudio && <span className="text-[7px] opacity-60 uppercase">{scene.audioSource === 'fallback' ? 'SoT' : 'Gemini'}</span>}
             </button>
         </div>
 
-        {/* Explicit Preview Button (Alternative to overlay) */}
+        {/* Explicit Preview Button */}
         {isReadyToPreview && (
              <button
                 onClick={onPreview}

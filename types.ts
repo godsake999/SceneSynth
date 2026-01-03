@@ -1,4 +1,7 @@
 
+export type GenerationSource = 'gemini' | 'fallback' | 'none';
+export type GenerationStrategy = 'smart' | 'force-fallback' | 'gemini-only';
+
 export interface Scene {
   id: number;
   storyLine: string;
@@ -6,6 +9,11 @@ export interface Scene {
   imageUrl?: string;
   audioUrl?: string;
   
+  // Tracking source
+  textSource: GenerationSource;
+  imageSource: GenerationSource;
+  audioSource: GenerationSource;
+
   // Granular Statuses
   textStatus: 'idle' | 'generating' | 'completed' | 'error';
   imageStatus: 'idle' | 'generating' | 'completed' | 'error';
@@ -18,6 +26,10 @@ export interface IntroState {
   imageUrl?: string;
   audioUrl?: string;
   
+  textSource: GenerationSource;
+  imageSource: GenerationSource;
+  audioSource: GenerationSource;
+
   textStatus: 'idle' | 'generating' | 'completed' | 'error';
   imageStatus: 'idle' | 'generating' | 'completed' | 'error';
   audioStatus: 'idle' | 'generating' | 'completed' | 'error';
@@ -26,6 +38,8 @@ export interface IntroState {
 export interface OutroState {
   message: string;
   audioUrl?: string;
+  textSource: GenerationSource;
+  audioSource: GenerationSource;
   textStatus: 'idle' | 'generating' | 'completed' | 'error';
   audioStatus: 'idle' | 'generating' | 'completed' | 'error';
 }

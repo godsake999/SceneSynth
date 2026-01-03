@@ -1,6 +1,11 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { StoryResponse } from "../types";
+import { StoryResponse, GenerationSource, GenerationStrategy } from "../types";
+
+export interface GenerationResult<T> {
+  data: T;
+  source: GenerationSource;
+}
 
 // --- FALLBACK SERVICES ---
 
@@ -129,7 +134,7 @@ const retryWithBackoff = async <T>(
       await new Promise(resolve => setTimeout(resolve, delayMs));
       return retryWithBackoff(fn, fallbackFn, retries - 1, delayMs * 2);
     }
-    return fallbackFn();
+    throw error;
   }
 };
 
@@ -139,7 +144,7 @@ export const generateStoryPlan = async (topic: string, style: string): Promise<S
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `Create a 5-scene YouTube Short plan. Topic: ${topic}. Style: ${style}. Return JSON.`;
 
-  return retryWithBackoff(async () => {
+  try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
@@ -166,35 +171,52 @@ export const generateStoryPlan = async (topic: string, style: string): Promise<S
       }
     });
     return JSON.parse(response.text!) as StoryResponse;
-  }, () => getMockStoryPlan(topic));
+  } catch (e) {
+    return getMockStoryPlan(topic);
+  }
 };
 
-export const generateSceneImage = async (prompt: string): Promise<string> => {
+export const generateSceneImage = async (prompt: string, strategy: GenerationStrategy = 'smart'): Promise<GenerationResult<string>> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const fullPrompt = `Cinematic scene: ${prompt}, vertical, highly detailed, photorealistic, 4k`;
 
-  return retryWithBackoff(async () => {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image', 
-        contents: { parts: [{ text: fullPrompt }] },
-        config: { 
-          imageConfig: { 
-            aspectRatio: "9:16"
-          } 
-        }
-      });
+  if (strategy === 'force-fallback') {
+    return { data: await generateFluxImage(prompt), source: 'fallback' };
+  }
 
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if (part.inlineData) {
-          return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-        }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image', 
+      contents: { parts: [{ text: fullPrompt }] },
+      config: { 
+        imageConfig: { 
+          aspectRatio: "9:16"
+        } 
       }
-      throw new Error("No image data returned from Gemini");
-  }, () => generateFluxImage(prompt));
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return { 
+            data: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+            source: 'gemini' 
+        };
+      }
+    }
+    throw new Error("No image data returned");
+  } catch (e) {
+    if (strategy === 'gemini-only') throw e;
+    return { data: await generateFluxImage(prompt), source: 'fallback' };
+  }
 };
 
-export const generateSpeech = async (text: string): Promise<string> => {
+export const generateSpeech = async (text: string, strategy: GenerationStrategy = 'smart'): Promise<GenerationResult<string>> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  if (strategy === 'force-fallback') {
+    return { data: await generateSoundOfTextTTS(text), source: 'fallback' };
+  }
+
   try {
       const response = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
@@ -213,16 +235,16 @@ export const generateSpeech = async (text: string): Promise<string> => {
       const pcmBytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) pcmBytes[i] = binaryString.charCodeAt(i);
       const pcmBlob = new Blob([pcmBytes], { type: 'audio/pcm;rate=24000' });
-      return URL.createObjectURL(pcmBlob);
+      return { data: URL.createObjectURL(pcmBlob), source: 'gemini' };
   } catch (e) {
-      console.warn("Gemini TTS failed, falling back to SoundOfText...", e);
-      return generateSoundOfTextTTS(text);
+      if (strategy === 'gemini-only') throw e;
+      return { data: await generateSoundOfTextTTS(text), source: 'fallback' };
   }
 };
 
 export const generateSingleSceneText = async (topic: string, sceneIndex: number, context: string): Promise<{storyLine: string, imagePrompt: string}> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    return retryWithBackoff(async () => {
+    try {
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `Write Scene ${sceneIndex} for a YouTube Short about "${topic}". Context: ${context}. Return JSON with storyLine and imagePrompt.`,
@@ -238,27 +260,33 @@ export const generateSingleSceneText = async (topic: string, sceneIndex: number,
             }
         });
         return JSON.parse(response.text!) as {storyLine: string, imagePrompt: string};
-    }, () => ({ storyLine: `Scene ${sceneIndex} script about ${topic}.`, imagePrompt: `Artistic view of ${topic}` }));
+    } catch (e) {
+        return { storyLine: `Scene ${sceneIndex} script about ${topic}.`, imagePrompt: `Artistic view of ${topic}` };
+    }
 };
 
 export const generateIntroTitle = async (topic: string, style: string): Promise<string> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    return retryWithBackoff(async () => {
+    try {
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `Generate a short catchy title for a video about ${topic}. Return JUST text.`
         });
         return response.text?.trim() || "Untitled";
-    }, () => "My Story");
+    } catch (e) {
+        return "My Story";
+    }
 };
 
 export const generateOutroMessage = async (topic: string): Promise<string> => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    return retryWithBackoff(async () => {
+    try {
         const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `Generate a short outro message for ${topic}. Return JUST text.`
         });
         return response.text?.trim() || "Thanks for watching!";
-    }, () => "Subscribe!");
+    } catch (e) {
+        return "Subscribe!";
+    }
 };

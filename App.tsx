@@ -9,20 +9,26 @@ import {
     generateOutroMessage
 } from './services/geminiService';
 import { generateSequentialVideo } from './utils/videoGenerator';
-import { Scene, IntroState, OutroState } from './types';
+import { Scene, IntroState, OutroState, GenerationStrategy } from './types';
 import SceneCard from './components/SceneCard';
 
 const App: React.FC = () => {
   const [topic, setTopic] = useState('');
   const [style, setStyle] = useState('Cinematic 3D Render');
+  const [strategy, setStrategy] = useState<GenerationStrategy>('smart');
   
   // Initial States
   const initialIntro: IntroState = { 
-      title: '', imagePrompt: '', textStatus: 'idle', imageStatus: 'idle', audioStatus: 'idle' 
+      title: '', imagePrompt: '', textStatus: 'idle', imageStatus: 'idle', audioStatus: 'idle',
+      textSource: 'none', imageSource: 'none', audioSource: 'none'
   };
-  const initialOutro: OutroState = { message: '', textStatus: 'idle', audioStatus: 'idle' };
+  const initialOutro: OutroState = { 
+      message: '', textStatus: 'idle', audioStatus: 'idle',
+      textSource: 'none', audioSource: 'none'
+  };
   const initialScenes: Scene[] = Array.from({ length: 5 }, (_, i) => ({
-      id: i + 1, storyLine: '', imagePrompt: '', textStatus: 'idle', imageStatus: 'idle', audioStatus: 'idle'
+      id: i + 1, storyLine: '', imagePrompt: '', textStatus: 'idle', imageStatus: 'idle', audioStatus: 'idle',
+      textSource: 'none', imageSource: 'none', audioSource: 'none'
   }));
 
   const [intro, setIntro] = useState<IntroState>(initialIntro);
@@ -54,7 +60,7 @@ const App: React.FC = () => {
 
   const toggleJsonEditor = () => {
     if (!showJson) {
-      const data = { intro, outro, scenes: scenes.map(s => ({ storyLine: s.storyLine, imagePrompt: s.imagePrompt, imageUrl: s.imageUrl, audioUrl: s.audioUrl })) };
+      const data = { intro, outro, scenes: scenes.map(s => ({ storyLine: s.storyLine, imagePrompt: s.imagePrompt, imageUrl: s.imageUrl, audioUrl: s.audioUrl, imageSource: s.imageSource, audioSource: s.audioSource })) };
       setJsonContent(JSON.stringify(data, null, 2));
       setShowJson(true);
     } else {
@@ -81,7 +87,7 @@ const App: React.FC = () => {
       setIntro(prev => ({ ...prev, textStatus: 'generating' }));
       try {
           const title = await generateIntroTitle(topic, style);
-          setIntro(prev => ({ ...prev, title, textStatus: 'completed' }));
+          setIntro(prev => ({ ...prev, title, textStatus: 'completed', textSource: 'gemini' }));
       } catch (e: any) { setIntro(prev => ({ ...prev, textStatus: 'error' })); setError(e.message); }
   };
 
@@ -89,8 +95,8 @@ const App: React.FC = () => {
       const prompt = intro.imagePrompt || `Movie title card for "${intro.title}", ${style} style`;
       setIntro(prev => ({ ...prev, imageStatus: 'generating' }));
       try {
-          const url = await generateSceneImage(prompt);
-          setIntro(prev => ({ ...prev, imageUrl: url, imageStatus: 'completed' }));
+          const res = await generateSceneImage(prompt, strategy);
+          setIntro(prev => ({ ...prev, imageUrl: res.data, imageStatus: 'completed', imageSource: res.source }));
       } catch (e: any) { setIntro(prev => ({ ...prev, imageStatus: 'error' })); setError(e.message); }
   };
 
@@ -98,8 +104,8 @@ const App: React.FC = () => {
       if (!intro.title) return;
       setIntro(prev => ({ ...prev, audioStatus: 'generating' }));
       try {
-          const url = await generateSpeech(intro.title);
-          setIntro(prev => ({ ...prev, audioUrl: url, audioStatus: 'completed' }));
+          const res = await generateSpeech(intro.title, strategy);
+          setIntro(prev => ({ ...prev, audioUrl: res.data, audioStatus: 'completed', audioSource: res.source }));
       } catch (e: any) { setIntro(prev => ({ ...prev, audioStatus: 'error' })); setError(e.message); }
   };
 
@@ -107,7 +113,7 @@ const App: React.FC = () => {
       setOutro(prev => ({ ...prev, textStatus: 'generating' }));
       try {
           const message = await generateOutroMessage(topic);
-          setOutro(prev => ({ ...prev, message, textStatus: 'completed' }));
+          setOutro(prev => ({ ...prev, message, textStatus: 'completed', textSource: 'gemini' }));
       } catch (e: any) { setOutro(prev => ({ ...prev, textStatus: 'error' })); setError(e.message); }
   };
 
@@ -115,8 +121,8 @@ const App: React.FC = () => {
       if (!outro.message) return;
       setOutro(prev => ({ ...prev, audioStatus: 'generating' }));
       try {
-          const url = await generateSpeech(outro.message);
-          setOutro(prev => ({ ...prev, audioUrl: url, audioStatus: 'completed' }));
+          const res = await generateSpeech(outro.message, strategy);
+          setOutro(prev => ({ ...prev, audioUrl: res.data, audioStatus: 'completed', audioSource: res.source }));
       } catch (e: any) { setOutro(prev => ({ ...prev, audioStatus: 'error' })); setError(e.message); }
   };
 
@@ -125,10 +131,10 @@ const App: React.FC = () => {
       setError(null);
       try {
           const plan = await generateStoryPlan(topic, style);
-          setIntro(prev => ({ ...prev, title: plan.title, imagePrompt: plan.introImagePrompt || `Title card: ${plan.title}`, textStatus: 'completed' }));
-          setOutro(prev => ({ ...prev, message: plan.outroMessage, textStatus: 'completed' }));
+          setIntro(prev => ({ ...prev, title: plan.title, imagePrompt: plan.introImagePrompt || `Title card: ${plan.title}`, textStatus: 'completed', textSource: 'gemini' }));
+          setOutro(prev => ({ ...prev, message: plan.outroMessage, textStatus: 'completed', textSource: 'gemini' }));
           setScenes(prev => prev.map((s, i) => ({
-              ...s, storyLine: plan.scenes[i]?.storyLine || '', imagePrompt: `${plan.scenes[i].imagePrompt}, ${style} style`, textStatus: 'completed'
+              ...s, storyLine: plan.scenes[i]?.storyLine || '', imagePrompt: `${plan.scenes[i].imagePrompt}, ${style} style`, textStatus: 'completed', textSource: 'gemini'
           })));
       } catch (e: any) { setError(e.message); }
   };
@@ -137,23 +143,23 @@ const App: React.FC = () => {
       setScenes(prev => { const next = [...prev]; next[index].textStatus = 'generating'; return next; });
       try {
           const res = await generateSingleSceneText(topic, index + 1, scenes.slice(0, index).map(s => s.storyLine).join(" "));
-          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], storyLine: res.storyLine, imagePrompt: `${res.imagePrompt}, ${style} style`, textStatus: 'completed' }; return next; });
+          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], storyLine: res.storyLine, imagePrompt: `${res.imagePrompt}, ${style} style`, textStatus: 'completed', textSource: 'gemini' }; return next; });
       } catch (e: any) { setScenes(prev => { const next = [...prev]; next[index].textStatus = 'error'; return next; }); setError(e.message); }
   };
 
   const handleGenerateSceneImage = async (index: number) => {
       setScenes(prev => { const next = [...prev]; next[index].imageStatus = 'generating'; return next; });
       try {
-          const url = await generateSceneImage(scenes[index].imagePrompt);
-          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], imageUrl: url, imageStatus: 'completed' }; return next; });
+          const res = await generateSceneImage(scenes[index].imagePrompt, strategy);
+          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], imageUrl: res.data, imageStatus: 'completed', imageSource: res.source }; return next; });
       } catch (e: any) { setScenes(prev => { const next = [...prev]; next[index].imageStatus = 'error'; return next; }); setError(e.message); }
   };
 
   const handleGenerateSceneAudio = async (index: number) => {
       setScenes(prev => { const next = [...prev]; next[index].audioStatus = 'generating'; return next; });
       try {
-          const url = await generateSpeech(scenes[index].storyLine);
-          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], audioUrl: url, audioStatus: 'completed' }; return next; });
+          const res = await generateSpeech(scenes[index].storyLine, strategy);
+          setScenes(prev => { const next = [...prev]; next[index] = { ...next[index], audioUrl: res.data, audioStatus: 'completed', audioSource: res.source }; return next; });
       } catch (e: any) { setScenes(prev => { const next = [...prev]; next[index].audioStatus = 'error'; return next; }); setError(e.message); }
   };
 
@@ -217,7 +223,7 @@ const App: React.FC = () => {
             {!showJson && (
               <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 mb-10">
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-                      <div className="md:col-span-6">
+                      <div className="md:col-span-5">
                           <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Story Topic</label>
                           <input type="text" value={topic} onChange={e => setTopic(e.target.value)} placeholder="A lone astronaut discovers an ancient temple on Mars..." className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none" />
                       </div>
@@ -227,9 +233,17 @@ const App: React.FC = () => {
                               {['Cinematic 3D Render', 'Cyberpunk Neon', 'Studio Ghibli Anime', 'Vibrant Watercolor', 'Dark Fantasy Oil Painting', 'Hyper-Realistic Photography'].map(s => <option key={s} value={s}>{s}</option>)}
                            </select>
                       </div>
-                      <div className="md:col-span-3">
+                      <div className="md:col-span-2">
+                           <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Model Strategy</label>
+                           <select value={strategy} onChange={e => setStrategy(e.target.value as GenerationStrategy)} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-3 outline-none text-[10px] font-bold">
+                              <option value="smart">SMART (AUTO)</option>
+                              <option value="force-fallback">FORCE FALLBACK</option>
+                              <option value="gemini-only">GEMINI ONLY</option>
+                           </select>
+                      </div>
+                      <div className="md:col-span-2">
                           <button onClick={handleGenerateAllText} disabled={!topic} className="w-full h-[50px] bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20">
-                              <i className="fa-solid fa-wand-magic-sparkles"></i> Generate Plan
+                              <i className="fa-solid fa-wand-magic-sparkles"></i> Plan
                           </button>
                       </div>
                   </div>
@@ -244,7 +258,14 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {/* IMPROVED INTRO CARD */}
                   <div className="bg-slate-900/50 border border-indigo-500/30 rounded-xl overflow-hidden flex flex-col relative">
-                      <div className="p-3 bg-indigo-900/20 border-b border-indigo-500/20 flex justify-between items-center"><span className="text-xs font-bold text-indigo-400">INTRO</span></div>
+                      <div className="p-3 bg-indigo-900/20 border-b border-indigo-500/20 flex justify-between items-center">
+                          <span className="text-xs font-bold text-indigo-400">INTRO</span>
+                          {intro.imageSource !== 'none' && (
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${intro.imageSource === 'gemini' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
+                                  {intro.imageSource === 'gemini' ? 'Gemini' : 'Flux'}
+                              </span>
+                          )}
+                      </div>
                       <div className="aspect-[9/16] relative bg-black/40 group">
                           {intro.imageUrl ? <img src={intro.imageUrl} className="w-full h-full object-cover" alt="Intro" /> : <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">{intro.imageStatus === 'generating' ? <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full"></div> : <i className="fa-solid fa-film text-4xl opacity-30"></i>}</div>}
                           <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/95 to-transparent flex flex-col gap-2">
@@ -257,14 +278,6 @@ const App: React.FC = () => {
                                 </div>
                             </button>
                           )}
-                          {isPreviewingIntro && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
-                                <div className="flex flex-col items-center gap-2">
-                                    <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                    <span className="text-[10px] font-bold text-white tracking-widest">RENDERING</span>
-                                </div>
-                            </div>
-                          )}
                       </div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
                           <button onClick={handleGenerateIntroTitle} className="bg-slate-700 text-white text-[10px] py-2 rounded">TITLE</button>
@@ -276,7 +289,7 @@ const App: React.FC = () => {
                               intro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
                             } disabled:opacity-50`}
                           >
-                             {intro.audioStatus === 'generating' ? 'GENERATING...' : (intro.audioUrl ? 'REDO VOICE' : 'VOICE TITLE')}
+                             {intro.audioStatus === 'generating' ? 'GENERATING...' : (intro.audioUrl ? `REDO VOICE (${intro.audioSource === 'gemini' ? 'GEM' : 'FALL'})` : 'VOICE TITLE')}
                           </button>
                       </div>
                   </div>
@@ -286,7 +299,14 @@ const App: React.FC = () => {
                   
                   {/* OUTRO CARD */}
                   <div className="bg-slate-900/50 border border-emerald-500/30 rounded-xl overflow-hidden flex flex-col">
-                      <div className="p-3 bg-emerald-900/20 border-b border-emerald-500/20 flex justify-between items-center"><span className="text-xs font-bold text-emerald-400">OUTRO</span></div>
+                      <div className="p-3 bg-emerald-900/20 border-b border-emerald-500/20 flex justify-between items-center">
+                          <span className="text-xs font-bold text-emerald-400">OUTRO</span>
+                          {outro.audioSource !== 'none' && (
+                              <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${outro.audioSource === 'gemini' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
+                                  {outro.audioSource === 'gemini' ? 'Gemini' : 'SoT'}
+                              </span>
+                          )}
+                      </div>
                       <div className="aspect-[9/16] bg-black/40 flex items-center justify-center p-6"><textarea value={outro.message} onChange={e => setOutro({...outro, message: e.target.value})} placeholder="Closing message..." className="w-full bg-transparent text-center text-white text-lg font-bold outline-none resize-none" rows={4} /></div>
                       <div className="p-3 grid grid-cols-2 gap-2 mt-auto bg-slate-800">
                           <button onClick={handleGenerateOutroMessage} className="bg-slate-700 text-white text-[10px] py-2 rounded">TEXT</button>
@@ -297,7 +317,7 @@ const App: React.FC = () => {
                                 outro.audioUrl ? 'bg-slate-700 text-slate-300 hover:bg-slate-600' : 'bg-emerald-600 text-white hover:bg-emerald-500'
                             } disabled:opacity-50`}
                           >
-                             {outro.audioStatus === 'generating' ? 'GENERATING...' : (outro.audioUrl ? 'REDO VOICE' : 'VOICE')}
+                             {outro.audioStatus === 'generating' ? 'GENERATING...' : (outro.audioUrl ? `REDO VOICE (${outro.audioSource === 'gemini' ? 'GEM' : 'FALL'})` : 'VOICE')}
                           </button>
                       </div>
                   </div>
