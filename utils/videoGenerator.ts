@@ -142,7 +142,7 @@ export const generateSequentialVideo = async ({
                 outro.message, 
                 width, 
                 height,
-                voiceDuration + 4.0 
+                voiceDuration + 2.0 
             );
         }
     } else {
