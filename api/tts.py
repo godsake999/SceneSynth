@@ -1,9 +1,11 @@
 from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS
 import edge_tts
 import asyncio
 import io
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route('/api/tts', methods=['POST'])
 def tts_handler():
