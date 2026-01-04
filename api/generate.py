@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import os
 import json
+import concurrent.futures
+from functools import wraps
 
 from google import genai
 from google.genai import types
@@ -9,6 +11,24 @@ app = Flask(__name__)
 
 # Initialize Gemini client
 client = genai.Client(api_key=os.environ.get("API_KEY"))
+
+# Timeout for image generation (seconds) - keep under Vercel's 60s limit
+IMAGE_GENERATION_TIMEOUT = 45
+
+
+def with_timeout(timeout_seconds):
+    """Decorator to add timeout to functions"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+                try:
+                    return future.result(timeout=timeout_seconds)
+                except concurrent.futures.TimeoutError:
+                    raise TimeoutError(f"Operation timed out after {timeout_seconds}s")
+        return wrapper
+    return decorator
 
 
 @app.route('/api/generate', methods=['POST'])
@@ -23,7 +43,7 @@ def generate_handler():
                 body.get('style', '')
             )
         elif action == 'generateSceneImage':
-            result = generate_scene_image(body.get('prompt', ''))
+            result = generate_scene_image_with_timeout(body.get('prompt', ''))
         elif action == 'generateSingleSceneText':
             result = generate_single_scene_text(
                 body.get('topic', ''),
@@ -95,38 +115,53 @@ def generate_story_plan(topic: str, style: str) -> dict:
         }
 
 
-# ===== IMAGE GENERATION =====
-def generate_scene_image(prompt: str) -> dict:
-    full_prompt = f"Cinematic scene: {prompt}, vertical 9:16, high detail, 4k"
-    
+# ===== IMAGE GENERATION (with timeout) =====
+def generate_scene_image_with_timeout(prompt: str) -> dict:
+    """Wrapper that catches timeout and returns fallback signal"""
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-preview-04-17",
-            contents=full_prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"],
-            )
-        )
-        
-        if response.candidates and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if part.inline_data:
-                    image_data = part.inline_data.data
-                    mime_type = part.inline_data.mime_type
-                    return {
-                        "success": True,
-                        "data": f"data:{mime_type};base64,{image_data}",
-                        "source": "gemini"
-                    }
-        
-        raise ValueError("No image data in response")
-        
+        return _generate_scene_image_internal(prompt)
+    except TimeoutError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "source": "timeout",
+            "useFallback": True
+        }
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
-            "source": "fallback_needed"
+            "source": "error",
+            "useFallback": True
         }
+
+
+@with_timeout(IMAGE_GENERATION_TIMEOUT)
+def _generate_scene_image_internal(prompt: str) -> dict:
+    """Actual Gemini image generation with timeout decorator"""
+    full_prompt = f"Cinematic scene: {prompt}, vertical 9:16, high detail, 4k"
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-preview-04-17",
+        contents=full_prompt,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE", "TEXT"],
+        )
+    )
+    
+    if response.candidates and response.candidates[0].content.parts:
+        for part in response.candidates[0].content.parts:
+            if part.inline_data:
+                image_data = part.inline_data.data
+                mime_type = part.inline_data.mime_type
+                return {
+                    "success": True,
+                    "data": f"data:{mime_type};base64,{image_data}",
+                    "source": "gemini",
+                    "useFallback": False
+                }
+    
+    raise ValueError("No image data in response")
 
 
 # ===== SINGLE SCENE TEXT =====
