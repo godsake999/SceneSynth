@@ -1,0 +1,16 @@
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Audio files (generated)
+*.mp3
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
