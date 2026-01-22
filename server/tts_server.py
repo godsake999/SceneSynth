@@ -5,8 +5,13 @@ import uuid
 import subprocess
 import sys
 import tempfile
+import requests
 
 app = Flask(__name__)
+
+# Freesound API Configuration
+FREESOUND_API_KEY = os.environ.get('FREESOUND_API_KEY', '')
+FREESOUND_BASE_URL = 'https://freesound.org/apiv2'
 CORS(app)
 
 VOICES = {
@@ -101,12 +106,186 @@ def tts():
             except Exception as e:
                 print(f"[TTS] Failed to clean up: {e}")
 
+# ============== FREESOUND AUDIO ENDPOINTS ==============
+
+@app.route("/audio/search", methods=["GET"])
+def search_audio():
+    """Search Freesound for sounds by query"""
+    query = request.args.get('q', '')
+    filter_type = request.args.get('filter', '')  # 'sfx' or 'music'
+    page = request.args.get('page', '1')
+    
+    if not query:
+        return jsonify({"error": "No search query provided"}), 400
+    
+    if not FREESOUND_API_KEY:
+        return jsonify({"error": "Freesound API key not configured"}), 500
+    
+    try:
+        # Build search params
+        params = {
+            'query': query,
+            'token': FREESOUND_API_KEY,
+            'fields': 'id,name,duration,previews,tags,description',
+            'page_size': 15,
+            'page': page
+        }
+        
+        # Add duration filter for SFX (short) vs Music (long)
+        if filter_type == 'sfx':
+            params['filter'] = 'duration:[0 TO 10]'  # Under 10 seconds
+        elif filter_type == 'music':
+            params['filter'] = 'duration:[30 TO 300]'  # 30s to 5min
+        
+        print(f"[AUDIO] Searching Freesound: {query} (filter: {filter_type})")
+        response = requests.get(f"{FREESOUND_BASE_URL}/search/text/", params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        results = []
+        
+        for sound in data.get('results', []):
+            previews = sound.get('previews', {})
+            results.append({
+                'id': sound['id'],
+                'name': sound['name'],
+                'duration': round(sound.get('duration', 0), 2),
+                'previewUrl': previews.get('preview-hq-mp3') or previews.get('preview-lq-mp3', ''),
+                'tags': sound.get('tags', [])[:5]
+            })
+        
+        print(f"[AUDIO] Found {len(results)} results")
+        return jsonify({
+            'results': results,
+            'count': data.get('count', 0),
+            'next': data.get('next'),
+            'previous': data.get('previous')
+        })
+        
+    except requests.RequestException as e:
+        print(f"[AUDIO] Freesound API error: {e}")
+        return jsonify({"error": f"Freesound API error: {str(e)}"}), 500
+
+@app.route("/audio/stream/<int:sound_id>", methods=["GET"])
+def stream_audio(sound_id):
+    """Stream audio preview from Freesound by sound ID"""
+    if not FREESOUND_API_KEY:
+        return jsonify({"error": "Freesound API key not configured"}), 500
+    
+    try:
+        # First, get the sound details to find preview URL
+        print(f"[AUDIO] Fetching sound {sound_id} details")
+        response = requests.get(
+            f"{FREESOUND_BASE_URL}/sounds/{sound_id}/",
+            params={'token': FREESOUND_API_KEY, 'fields': 'id,name,previews'},
+            timeout=10
+        )
+        response.raise_for_status()
+        
+        sound_data = response.json()
+        previews = sound_data.get('previews', {})
+        preview_url = previews.get('preview-hq-mp3') or previews.get('preview-lq-mp3')
+        
+        if not preview_url:
+            return jsonify({"error": "No preview available for this sound"}), 404
+        
+        # Stream the preview MP3
+        print(f"[AUDIO] Streaming from: {preview_url}")
+        audio_response = requests.get(preview_url, stream=True, timeout=30)
+        audio_response.raise_for_status()
+        
+        # Return as streaming response
+        return Response(
+            audio_response.iter_content(chunk_size=8192),
+            mimetype='audio/mpeg',
+            headers={
+                'Content-Disposition': f'inline; filename="sound_{sound_id}.mp3"',
+                'Cache-Control': 'public, max-age=86400'  # Cache for 24 hours
+            }
+        )
+        
+    except requests.RequestException as e:
+        print(f"[AUDIO] Stream error: {e}")
+        return jsonify({"error": f"Failed to stream audio: {str(e)}"}), 500
+
+@app.route("/audio/fetch", methods=["GET"])
+def fetch_audio_by_query():
+    """Search Freesound by query and stream the top result - for Gemini-generated queries"""
+    query = request.args.get('q', '')
+    audio_type = request.args.get('type', 'sfx')  # 'sfx' or 'music'
+    
+    if not query:
+        return jsonify({"error": "No search query provided"}), 400
+    
+    if not FREESOUND_API_KEY:
+        return jsonify({"error": "Freesound API key not configured"}), 500
+    
+    try:
+        # Build search params
+        params = {
+            'query': query,
+            'token': FREESOUND_API_KEY,
+            'fields': 'id,name,duration,previews',
+            'page_size': 1,  # Just get top result
+            'sort': 'rating_desc'  # Best rated first
+        }
+        
+        # Add duration filter
+        if audio_type == 'sfx':
+            params['filter'] = 'duration:[0 TO 15]'  # Under 15 seconds for SFX
+        elif audio_type == 'music':
+            params['filter'] = 'duration:[20 TO 300]'  # 20s to 5min for music
+        
+        print(f"[AUDIO] Fetching by query: '{query}' (type: {audio_type})")
+        response = requests.get(f"{FREESOUND_BASE_URL}/search/text/", params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        results = data.get('results', [])
+        
+        if not results:
+            return jsonify({"error": f"No sounds found for query: {query}"}), 404
+        
+        # Get the top result
+        sound = results[0]
+        previews = sound.get('previews', {})
+        preview_url = previews.get('preview-hq-mp3') or previews.get('preview-lq-mp3')
+        
+        if not preview_url:
+            return jsonify({"error": "No preview available for this sound"}), 404
+        
+        print(f"[AUDIO] Found: {sound['name']} (ID: {sound['id']}, duration: {sound.get('duration', 0):.1f}s)")
+        print(f"[AUDIO] Streaming from: {preview_url}")
+        
+        # Stream the preview MP3
+        audio_response = requests.get(preview_url, stream=True, timeout=30)
+        audio_response.raise_for_status()
+        
+        return Response(
+            audio_response.iter_content(chunk_size=8192),
+            mimetype='audio/mpeg',
+            headers={
+                'Content-Disposition': f'inline; filename="{query.replace(" ", "_")}.mp3"',
+                'X-Sound-Id': str(sound['id']),
+                'X-Sound-Name': sound['name'],
+                'X-Sound-Duration': str(sound.get('duration', 0)),
+                'Cache-Control': 'public, max-age=86400'
+            }
+        )
+        
+    except requests.RequestException as e:
+        print(f"[AUDIO] Fetch error: {e}")
+        return jsonify({"error": f"Failed to fetch audio: {str(e)}"}), 500
+
 if __name__ == "__main__":
     print("="*60)
-    print("Edge-TTS Server for SceneSynth (Streaming Mode)")
+    print("SceneSynth Audio Server (TTS + Freesound)")
     print("="*60)
     print(f"Python: {sys.executable}")
-    print(f"Voices: {VOICES}")
+    print(f"TTS Voices: {VOICES}")
+    print(f"Freesound API: {'Configured' if FREESOUND_API_KEY else 'NOT CONFIGURED'}")
     print("Starting server on http://localhost:5006")
     print("="*60)
     app.run(host='0.0.0.0', port=5006, debug=True)
+
+
