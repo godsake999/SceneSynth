@@ -7,11 +7,22 @@ import sys
 import tempfile
 import requests
 
+# Load environment variables from .env.local file
+from dotenv import load_dotenv
+load_dotenv('.env.local')
+load_dotenv()  # Also try .env as fallback
+
 app = Flask(__name__)
 
 # Freesound API Configuration
 FREESOUND_API_KEY = os.environ.get('FREESOUND_API_KEY', '')
 FREESOUND_BASE_URL = 'https://freesound.org/apiv2'
+
+# Hugging Face API Configuration
+HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
+HF_IMAGE_MODEL = 'playgroundai/playground-v2.5-1024px-aesthetic'
+HF_API_URL = f'https://api-inference.huggingface.co/models/{HF_IMAGE_MODEL}'
+
 CORS(app)
 
 VOICES = {
@@ -277,15 +288,93 @@ def fetch_audio_by_query():
         print(f"[AUDIO] Fetch error: {e}")
         return jsonify({"error": f"Failed to fetch audio: {str(e)}"}), 500
 
+# ============== IMAGE GENERATION ENDPOINTS ==============
+
+@app.route("/image/generate", methods=["POST"])
+def generate_image():
+    """Generate image using Playground v2.5 via Hugging Face Inference API"""
+    if not HF_API_TOKEN:
+        return jsonify({"error": "Hugging Face API token not configured"}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        prompt = data.get('prompt', '')
+        if not prompt:
+            return jsonify({"error": "No prompt provided"}), 400
+        
+        # Optional parameters
+        negative_prompt = data.get('negative_prompt', 'blurry, low quality, distorted, deformed')
+        width = data.get('width', 1024)
+        height = data.get('height', 1024)
+        
+        print(f"[IMAGE] Generating: {prompt[:50]}...")
+        
+        # Call Hugging Face Inference API
+        headers = {
+            'Authorization': f'Bearer {HF_API_TOKEN}',
+            'Content-Type': 'application/json'
+        }
+        
+        payload = {
+            'inputs': prompt,
+            'parameters': {
+                'negative_prompt': negative_prompt,
+                'width': width,
+                'height': height,
+                'num_inference_steps': 30,
+                'guidance_scale': 7.5
+            }
+        }
+        
+        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=120)
+        
+        # Check for model loading (503)
+        if response.status_code == 503:
+            error_data = response.json()
+            estimated_time = error_data.get('estimated_time', 60)
+            print(f"[IMAGE] Model loading, estimated time: {estimated_time}s")
+            return jsonify({
+                "error": "Model is loading",
+                "estimated_time": estimated_time,
+                "retry": True
+            }), 503
+        
+        response.raise_for_status()
+        
+        # Response is raw image bytes
+        image_bytes = response.content
+        print(f"[IMAGE] Generated {len(image_bytes)} bytes")
+        
+        # Return as base64 for easy frontend consumption
+        import base64
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        
+        return jsonify({
+            "image": f"data:image/png;base64,{image_base64}",
+            "prompt": prompt,
+            "model": HF_IMAGE_MODEL
+        })
+        
+    except requests.RequestException as e:
+        print(f"[IMAGE] Generation error: {e}")
+        return jsonify({"error": f"Image generation failed: {str(e)}"}), 500
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[IMAGE] Server Error: {error_trace}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     print("="*60)
-    print("SceneSynth Audio Server (TTS + Freesound)")
+    print("SceneSynth Media Server (TTS + Audio + Image)")
     print("="*60)
     print(f"Python: {sys.executable}")
     print(f"TTS Voices: {VOICES}")
     print(f"Freesound API: {'Configured' if FREESOUND_API_KEY else 'NOT CONFIGURED'}")
+    print(f"HuggingFace API: {'Configured' if HF_API_TOKEN else 'NOT CONFIGURED'}")
     print("Starting server on http://localhost:5006")
     print("="*60)
     app.run(host='0.0.0.0', port=5006, debug=True)
-
-
