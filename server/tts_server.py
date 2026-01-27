@@ -20,7 +20,7 @@ FREESOUND_BASE_URL = 'https://freesound.org/apiv2'
 
 # Hugging Face API Configuration
 HF_API_TOKEN = os.environ.get('HF_API_TOKEN', '')
-HF_IMAGE_MODEL = 'playgroundai/playground-v2.5-1024px-aesthetic'
+HF_IMAGE_MODEL = 'stabilityai/stable-diffusion-xl-base-1.0'
 HF_API_URL = f'https://api-inference.huggingface.co/models/{HF_IMAGE_MODEL}'
 
 CORS(app)
