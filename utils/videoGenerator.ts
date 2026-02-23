@@ -1,18 +1,20 @@
 
-import { Scene } from "../types";
+import { Scene, AudioConfig, SFXEvent } from "../types";
+import { fetchAudioStream } from "../services/audioService";
 
 interface VideoGeneratorOptions {
   scenes: Scene[];
   intro?: {
     imageUrl: string;
     title: string;
-    audioUrl?: string; 
+    audioUrl?: string;
   };
   outro?: {
     imageUrl?: string;
     audioUrl: string;
     message: string;
   };
+  audioConfig?: AudioConfig;  // SFX and background music
   onProgress?: (progress: number) => void;
 }
 
@@ -20,7 +22,7 @@ type TransitionType = 'fade' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDo
 
 // Professional, streamlined transitions for a cohesive feel
 const TRANSITIONS: TransitionType[] = [
-  'fade', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 
+  'fade', 'slideLeft', 'slideRight', 'slideUp', 'slideDown',
   'zoom', 'wipeLeft', 'wipeRight'
 ];
 
@@ -32,12 +34,13 @@ export const generateSequentialVideo = async ({
   scenes,
   intro,
   outro,
+  audioConfig,
   onProgress
 }: VideoGeneratorOptions): Promise<string> => {
-  
+
   const hasIntro = !!(intro?.imageUrl && intro?.audioUrl);
   const validScenes = scenes.filter(s => s.imageUrl && s.audioUrl);
-  
+
   if (validScenes.length === 0 && !hasIntro && !outro?.audioUrl) throw new Error("No valid content to generate video");
 
   await document.fonts.ready;
@@ -59,25 +62,29 @@ export const generateSequentialVideo = async ({
 
   const recorder = new MediaRecorder(stream, {
     mimeType: 'video/webm;codecs=vp9',
-    videoBitsPerSecond: 3500000 
+    videoBitsPerSecond: 3500000
   });
 
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
   recorder.start();
 
-  const bgmNodes = createAmbientBackgroundTrack(audioContext, dest);
-  bgmNodes.gain.gain.value = 0; 
-  bgmNodes.start();
-  
-  bgmNodes.gain.gain.setValueAtTime(0, audioContext.currentTime);
-  bgmNodes.gain.gain.linearRampToValueAtTime(0.08, audioContext.currentTime + 2.0); 
+  // Background music setup
+  let musicGain: GainNode | null = null;
+  let musicSource: AudioBufferSourceNode | null = null;
+  const musicConfig = audioConfig?.music;
+  const defaultMusicVolume = musicConfig?.volume ?? 0.25;
+  const duckVolume = musicConfig?.duckToVolume ?? 0.08;
+
+  // SFX tracking
+  const sfxBuffers = new Map<number, AudioBuffer>();
+  const scheduledSfx: Array<{ soundId: number; time: number; volume: number }> = [];
 
   try {
     const loadedAssets = await Promise.all(validScenes.map(async (scene) => {
-        const img = await loadImage(scene.imageUrl!);
-        const ab = await loadAudioUniversal(scene.audioUrl!, audioContext);
-        return { scene, img, audioBuffer: ab };
+      const img = await loadImage(scene.imageUrl!);
+      const ab = await loadAudioUniversal(scene.audioUrl!, audioContext);
+      return { scene, img, audioBuffer: ab };
     }));
 
     let introImg: HTMLImageElement | null = null;
@@ -95,28 +102,34 @@ export const generateSequentialVideo = async ({
     }
 
     if (introImg && introAudioBuffer) {
-       await playIntroSegment(ctx, dest, audioContext, introImg, intro!.title, width, height, introAudioBuffer);
+      await playIntroSegment(ctx, dest, audioContext, introImg, intro!.title, width, height, introAudioBuffer);
     }
 
     for (let i = 0; i < loadedAssets.length; i++) {
-        const { scene, img, audioBuffer } = loadedAssets[i];
-        if (onProgress) onProgress(i / loadedAssets.length);
-        const transition = TRANSITIONS[Math.floor(Math.random() * TRANSITIONS.length)];
-        await playSceneSegment(ctx, dest, audioContext, img, audioBuffer, scene.storyLine, width, height, transition);
+      const { scene, img, audioBuffer } = loadedAssets[i];
+      if (onProgress) onProgress(i / loadedAssets.length);
+      const transition = TRANSITIONS[Math.floor(Math.random() * TRANSITIONS.length)];
+      await playSceneSegment(ctx, dest, audioContext, img, audioBuffer, scene.storyLine, width, height, transition);
     }
 
     if (outro && outroBuffer) {
-        const bgImage = outroImg || (loadedAssets.length > 0 ? loadedAssets[loadedAssets.length - 1].img : introImg);
-        if (bgImage) {
-            const voiceDuration = outroBuffer.duration;
-            const fadeStartTime = audioContext.currentTime + voiceDuration;
-            bgmNodes.gain.gain.setValueAtTime(0.08, fadeStartTime);
-            bgmNodes.gain.gain.linearRampToValueAtTime(0, fadeStartTime + 2.5);
-            await playOutroSegment(ctx, dest, audioContext, bgImage, outroBuffer, outro.message, width, height, voiceDuration + 1.5);
+      const bgImage = outroImg || (loadedAssets.length > 0 ? loadedAssets[loadedAssets.length - 1].img : introImg);
+      if (bgImage) {
+        const voiceDuration = outroBuffer.duration;
+        // Fade out music at the end if we have one
+        if (musicGain) {
+          const fadeStartTime = audioContext.currentTime + voiceDuration;
+          musicGain.gain.setValueAtTime(duckVolume, fadeStartTime);
+          musicGain.gain.linearRampToValueAtTime(0, fadeStartTime + 2.5);
         }
+        await playOutroSegment(ctx, dest, audioContext, bgImage, outroBuffer, outro.message, width, height, voiceDuration + 1.5);
+      }
     }
-    
-    bgmNodes.stop();
+
+    // Stop music if playing
+    if (musicSource) {
+      try { musicSource.stop(); } catch (e) { /* already stopped */ }
+    }
     if (onProgress) onProgress(1);
   } catch (err) {
     recorder.stop();
@@ -152,8 +165,8 @@ const playIntroSegment = (
     let currentLine = words[0];
 
     for (let i = 1; i < words.length; i++) {
-        if (ctx.measureText(currentLine + " " + words[i]).width < width - 100) currentLine += " " + words[i];
-        else { lines.push(currentLine); currentLine = words[i]; }
+      if (ctx.measureText(currentLine + " " + words[i]).width < width - 100) currentLine += " " + words[i];
+      else { lines.push(currentLine); currentLine = words[i]; }
     }
     lines.push(currentLine);
 
@@ -161,18 +174,18 @@ const playIntroSegment = (
       const elapsed = (performance.now() - startTime) / 1000;
       if (elapsed >= duration) { resolve(); return; }
       const progress = elapsed / duration;
-      const scale = 1.0 + (0.05 * progress); 
-      ctx.drawImage(image, (width - width*scale)/2, (height - height*scale)/2, width*scale, height*scale);
-      
+      const scale = 1.0 + (0.05 * progress);
+      ctx.drawImage(image, (width - width * scale) / 2, (height - height * scale) / 2, width * scale, height * scale);
+
       ctx.fillStyle = "rgba(0,0,0,0.4)";
-      ctx.fillRect(0,0,width,height);
-      
+      ctx.fillRect(0, 0, width, height);
+
       ctx.globalAlpha = Math.min(progress * 4, 1);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = `800 60px Inter, sans-serif`;
       ctx.fillStyle = 'white';
-      lines.forEach((line, idx) => ctx.fillText(line, width/2, (height/2 - (lines.length*35)) + idx*70));
+      lines.forEach((line, idx) => ctx.fillText(line, width / 2, (height / 2 - (lines.length * 35)) + idx * 70));
       ctx.globalAlpha = 1;
       requestAnimationFrame(draw);
     };
@@ -181,108 +194,108 @@ const playIntroSegment = (
 };
 
 const playSceneSegment = (
-    ctx: CanvasRenderingContext2D, dest: MediaStreamAudioDestinationNode, audioCtx: AudioContext,
-    image: HTMLImageElement, audioBuffer: AudioBuffer, text: string, width: number, height: number,
-    transition: TransitionType
+  ctx: CanvasRenderingContext2D, dest: MediaStreamAudioDestinationNode, audioCtx: AudioContext,
+  image: HTMLImageElement, audioBuffer: AudioBuffer, text: string, width: number, height: number,
+  transition: TransitionType
 ): Promise<void> => {
-    return new Promise((resolve) => {
-        const snapshot = ctx.getImageData(0, 0, width, height);
-        const snapshotCanvas = document.createElement('canvas');
-        snapshotCanvas.width = width; snapshotCanvas.height = height;
-        snapshotCanvas.getContext('2d')?.putImageData(snapshot, 0, 0);
+  return new Promise((resolve) => {
+    const snapshot = ctx.getImageData(0, 0, width, height);
+    const snapshotCanvas = document.createElement('canvas');
+    snapshotCanvas.width = width; snapshotCanvas.height = height;
+    snapshotCanvas.getContext('2d')?.putImageData(snapshot, 0, 0);
 
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(dest);
-        source.start();
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(dest);
+    source.start();
 
-        const audioDur = audioBuffer.duration;
-        const totalDur = audioDur + BREATH_DURATION;
-        const startTime = performance.now();
+    const audioDur = audioBuffer.duration;
+    const totalDur = audioDur + BREATH_DURATION;
+    const startTime = performance.now();
 
-        const draw = () => {
-            const elapsed = (performance.now() - startTime) / 1000;
-            if (elapsed >= totalDur) { resolve(); return; }
-            
-            // progress of total scene duration
-            const totalProgress = elapsed / totalDur;
-            // progress of voice-over (for subtitles)
-            const audioProgress = Math.min(elapsed / audioDur, 1);
-            // progress of transition
-            const tp = Math.min(elapsed / TRANS_DURATION, 1);
+    const draw = () => {
+      const elapsed = (performance.now() - startTime) / 1000;
+      if (elapsed >= totalDur) { resolve(); return; }
 
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, width, height);
+      // progress of total scene duration
+      const totalProgress = elapsed / totalDur;
+      // progress of voice-over (for subtitles)
+      const audioProgress = Math.min(elapsed / audioDur, 1);
+      // progress of transition
+      const tp = Math.min(elapsed / TRANS_DURATION, 1);
 
-            // Subtle continuous Ken Burns zoom
-            const scale = 1.02 + (0.08 * totalProgress);
-            const sw = width * scale, sh = height * scale;
-            const bx = (width - sw) / 2, by = (height - sh) / 2;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
 
-            if (elapsed < TRANS_DURATION) {
-                switch(transition) {
-                    case 'fade':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.globalAlpha = tp;
-                        ctx.drawImage(image, bx, by, sw, sh);
-                        ctx.globalAlpha = 1;
-                        break;
-                    case 'slideLeft':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, bx + width * (1 - tp), by, sw, sh);
-                        break;
-                    case 'slideDown':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, bx, by - height * (1 - tp), sw, sh);
-                        break;
-                    case 'slideRight':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, bx - width * (1 - tp), by, sw, sh);
-                        break;
-                    case 'slideUp':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, bx, by + height * (1 - tp), sw, sh);
-                        break;
-                    case 'wipeLeft':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, 0, 0, width * tp, height, 0, 0, width * tp, height);
-                        break;
-                    case 'wipeRight':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.drawImage(image, width * (1 - tp), 0, width * tp, height, width * (1 - tp), 0, width * tp, height);
-                        break;
-                    case 'zoom':
-                        ctx.drawImage(snapshotCanvas, 0, 0);
-                        ctx.save();
-                        const z = 0.5 + 0.5 * tp;
-                        ctx.translate(width/2, height/2);
-                        ctx.scale(z, z);
-                        ctx.globalAlpha = tp;
-                        ctx.drawImage(image, -sw/2, -sh/2, sw, sh);
-                        ctx.restore();
-                        ctx.globalAlpha = 1;
-                        break;
-                    default:
-                        ctx.globalAlpha = tp;
-                        ctx.drawImage(image, bx, by, sw, sh);
-                        ctx.globalAlpha = 1;
-                }
-            } else {
-                ctx.drawImage(image, bx, by, sw, sh);
-            }
+      // Subtle continuous Ken Burns zoom
+      const scale = 1.02 + (0.08 * totalProgress);
+      const sw = width * scale, sh = height * scale;
+      const bx = (width - sw) / 2, by = (height - sh) / 2;
 
-            // Draw subtitles synced to audio progress
-            if (elapsed < audioDur + 0.2) {
-                drawSubtitles(ctx, text, width, height, audioProgress);
-            } else {
-                // Keep completed subtitle visible for a moment during breathing room
-                drawSubtitles(ctx, text, width, height, 1.0);
-            }
-            
-            requestAnimationFrame(draw);
-        };
-        draw();
-    });
+      if (elapsed < TRANS_DURATION) {
+        switch (transition) {
+          case 'fade':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.globalAlpha = tp;
+            ctx.drawImage(image, bx, by, sw, sh);
+            ctx.globalAlpha = 1;
+            break;
+          case 'slideLeft':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, bx + width * (1 - tp), by, sw, sh);
+            break;
+          case 'slideDown':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, bx, by - height * (1 - tp), sw, sh);
+            break;
+          case 'slideRight':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, bx - width * (1 - tp), by, sw, sh);
+            break;
+          case 'slideUp':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, bx, by + height * (1 - tp), sw, sh);
+            break;
+          case 'wipeLeft':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, 0, 0, width * tp, height, 0, 0, width * tp, height);
+            break;
+          case 'wipeRight':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.drawImage(image, width * (1 - tp), 0, width * tp, height, width * (1 - tp), 0, width * tp, height);
+            break;
+          case 'zoom':
+            ctx.drawImage(snapshotCanvas, 0, 0);
+            ctx.save();
+            const z = 0.5 + 0.5 * tp;
+            ctx.translate(width / 2, height / 2);
+            ctx.scale(z, z);
+            ctx.globalAlpha = tp;
+            ctx.drawImage(image, -sw / 2, -sh / 2, sw, sh);
+            ctx.restore();
+            ctx.globalAlpha = 1;
+            break;
+          default:
+            ctx.globalAlpha = tp;
+            ctx.drawImage(image, bx, by, sw, sh);
+            ctx.globalAlpha = 1;
+        }
+      } else {
+        ctx.drawImage(image, bx, by, sw, sh);
+      }
+
+      // Draw subtitles synced to audio progress
+      if (elapsed < audioDur + 0.2) {
+        drawSubtitles(ctx, text, width, height, audioProgress);
+      } else {
+        // Keep completed subtitle visible for a moment during breathing room
+        drawSubtitles(ctx, text, width, height, 1.0);
+      }
+
+      requestAnimationFrame(draw);
+    };
+    draw();
+  });
 };
 
 const playOutroSegment = (
@@ -301,23 +314,23 @@ const playOutroSegment = (
     const lines: string[] = [];
     let currentLine = words[0];
     for (let i = 1; i < words.length; i++) {
-        if (ctx.measureText(currentLine + " " + words[i]).width < width - 120) currentLine += " " + words[i];
-        else { lines.push(currentLine); currentLine = words[i]; }
+      if (ctx.measureText(currentLine + " " + words[i]).width < width - 120) currentLine += " " + words[i];
+      else { lines.push(currentLine); currentLine = words[i]; }
     }
     lines.push(currentLine);
 
     const draw = () => {
-        const elapsed = (performance.now() - startTime) / 1000;
-        if (elapsed >= duration) { resolve(); return; }
-        const p = Math.min(elapsed / 1.5, 1);
-        ctx.drawImage(image, 0, 0, width, height);
-        ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * p})`;
-        ctx.fillRect(0, 0, width, height);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = `rgba(255, 255, 255, ${p})`;
-        lines.forEach((l, i) => ctx.fillText(l, width/2, (height/2 - (lines.length*25)) + i*50));
-        requestAnimationFrame(draw);
+      const elapsed = (performance.now() - startTime) / 1000;
+      if (elapsed >= duration) { resolve(); return; }
+      const p = Math.min(elapsed / 1.5, 1);
+      ctx.drawImage(image, 0, 0, width, height);
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * p})`;
+      ctx.fillRect(0, 0, width, height);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(255, 255, 255, ${p})`;
+      lines.forEach((l, i) => ctx.fillText(l, width / 2, (height / 2 - (lines.length * 25)) + i * 50));
+      requestAnimationFrame(draw);
     };
     draw();
   });
@@ -331,7 +344,7 @@ const drawSubtitles = (ctx: CanvasRenderingContext2D, text: string, cw: number, 
   const lineHeight = fontSize * 1.3;
   ctx.textAlign = 'center';
   ctx.font = `bold ${fontSize}px Inter, sans-serif`;
-  
+
   // Wrap text into lines
   const words = text.split(' ');
   const lines: string[] = [];
@@ -359,7 +372,7 @@ const drawSubtitles = (ctx: CanvasRenderingContext2D, text: string, cw: number, 
     const y = startY + i * lineHeight;
     const x = cw / 2;
     const lineWidth = ctx.measureText(line).width;
-    
+
     // 1. Draw the "inactive" base text
     ctx.shadowColor = "rgba(0,0,0,0.8)";
     ctx.shadowBlur = 8;
@@ -371,26 +384,26 @@ const drawSubtitles = (ctx: CanvasRenderingContext2D, text: string, cw: number, 
     const lineChars = line.length;
     const lineStartProgress = charAccumulator / totalChars;
     const lineEndProgress = (charAccumulator + lineChars) / totalChars;
-    
+
     // Determine how much of this specific line should be highlighted
     if (progress > lineStartProgress) {
-        const lineLocalProgress = Math.min((progress - lineStartProgress) / (lineEndProgress - lineStartProgress), 1);
-        
-        ctx.save();
-        // Create a clipping rectangle that expands from the left of the text to the right
-        const textLeft = x - lineWidth / 2;
-        ctx.beginPath();
-        ctx.rect(textLeft, y - fontSize, lineWidth * lineLocalProgress, fontSize * 1.5);
-        ctx.clip();
-        
-        // Highlight styling: Vibrant Gold
-        ctx.fillStyle = "#FFD700"; 
-        ctx.shadowColor = "rgba(0,0,0,0.5)";
-        ctx.shadowBlur = 4;
-        ctx.fillText(line, x, y);
-        ctx.restore();
+      const lineLocalProgress = Math.min((progress - lineStartProgress) / (lineEndProgress - lineStartProgress), 1);
+
+      ctx.save();
+      // Create a clipping rectangle that expands from the left of the text to the right
+      const textLeft = x - lineWidth / 2;
+      ctx.beginPath();
+      ctx.rect(textLeft, y - fontSize, lineWidth * lineLocalProgress, fontSize * 1.5);
+      ctx.clip();
+
+      // Highlight styling: Vibrant Gold
+      ctx.fillStyle = "#FFD700";
+      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      ctx.shadowBlur = 4;
+      ctx.fillText(line, x, y);
+      ctx.restore();
     }
-    
+
     charAccumulator += lineChars + 1; // +1 to account for the space/gap
   });
 };
