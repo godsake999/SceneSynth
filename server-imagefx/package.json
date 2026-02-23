@@ -1,0 +1,17 @@
+{
+  "name": "scenesynth-imagefx-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "ImageFX (Imagen 4) proxy server for SceneSynth",
+  "main": "imagefx_server.js",
+  "scripts": {
+    "start": "node imagefx_server.js",
+    "dev": "node imagefx_server.js"
+  },
+  "dependencies": {
+    "@rohitaryal/imagefx-api": "latest",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0"
+  }
+}
