@@ -73,7 +73,7 @@ const generateFluxImage = async (prompt: string): Promise<string> => {
   return `https://image.pollinations.ai/prompt/${encodedPrompt}?width=720&height=1280&model=flux&nologo=true&seed=${seed}`;
 };
 
-const IMAGEFX_SERVER_URL = 'http://localhost:5008';
+const IMAGEFX_SERVER_URL = 'https://scenesynth-imagefx.onrender.com';
 
 const generateImageFXImage = async (prompt: string): Promise<string> => {
   console.warn("Generating ImageFX (Imagen 4) image...");
@@ -268,7 +268,7 @@ export const generateSceneImage = async (
   }
 
   if (strategy === 'force-imagefx') {
-    return { data: await generateImageFXImage(prompt), source: 'imagefx' };
+    return { data: await generateImageFXImage(compositePrompt), source: 'imagefx' };
   }
 
   try {
@@ -299,7 +299,7 @@ export const generateSceneImage = async (
     // Smart fallback: try ImageFX first, then Flux
     console.warn('Gemini image failed, trying ImageFX fallback...');
     try {
-      return { data: await generateImageFXImage(prompt), source: 'imagefx' };
+      return { data: await generateImageFXImage(compositePrompt), source: 'imagefx' };
     } catch (imagefxErr) {
       console.warn('ImageFX also failed, falling back to Flux:', imagefxErr);
       return { data: await generateFluxImage(prompt), source: 'fallback' };
