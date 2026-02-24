@@ -32,13 +32,15 @@ const SceneCard: React.FC<SceneCardProps> = ({
 
   const getAudioSourceLabel = () => {
     if (scene.audioSource === 'gemini') return 'Gemini';
+    if (scene.audioSource === 'camb') return 'Pro Voice';
     if (scene.audioSource === 'streamelements') return 'OS Voice';
     if (scene.audioSource === 'fallback') return 'SoT';
     return '';
   };
 
   const getAudioColorClass = () => {
-    if (scene.audioSource === 'gemini') return 'bg-green-500/90';
+    if (scene.audioSource === 'gemini') return 'bg-blue-500/90';
+    if (scene.audioSource === 'camb') return 'bg-orange-500/90';
     if (scene.audioSource === 'streamelements') return 'bg-emerald-500/90';
     return 'bg-amber-500/90';
   };

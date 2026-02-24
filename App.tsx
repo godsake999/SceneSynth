@@ -391,6 +391,7 @@ const App: React.FC = () => {
 
   const getAudioLabel = (source: string) => {
     if (source === 'gemini') return 'GEMINI';
+    if (source === 'camb') return 'CAMB.AI';
     if (source === 'streamelements') return 'OS VOICE';
     if (source === 'fallback') return 'SOT';
     return '';
@@ -445,6 +446,7 @@ const App: React.FC = () => {
                 <label className="text-xs font-bold text-slate-400 uppercase ml-1 mb-2 block">Model Strategy</label>
                 <select value={strategy} onChange={e => setStrategy(e.target.value as GenerationStrategy)} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-3 outline-none text-[10px] font-bold">
                   <option value="smart">SMART (AUTO)</option>
+                  <option value="force-camb">PRO BURMESE (CAMB.AI)</option>
                   <option value="force-fallback">FORCE FREE (Flux)</option>
                   <option value="force-imagefx">FORCE IMAGEFX</option>
                   <option value="gemini-only">GEMINI ONLY</option>

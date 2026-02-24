@@ -1,6 +1,6 @@
 
-export type GenerationSource = 'gemini' | 'fallback' | 'imagefx' | 'edge' | 'streamelements' | 'none';
-export type GenerationStrategy = 'smart' | 'force-fallback' | 'force-imagefx' | 'gemini-only';
+export type GenerationSource = 'gemini' | 'fallback' | 'imagefx' | 'edge' | 'streamelements' | 'camb' | 'none';
+export type GenerationStrategy = 'smart' | 'force-fallback' | 'force-imagefx' | 'force-camb' | 'gemini-only';
 
 export interface Scene {
   id: number;

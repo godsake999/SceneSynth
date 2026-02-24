@@ -307,6 +307,58 @@ export const generateSceneImage = async (
   }
 };
 
+const generateCambSpeech = async (text: string): Promise<string> => {
+  const apiKey = import.meta.env.VITE_CAMB_API_KEY;
+  if (!apiKey) throw new Error("CAMB_API_KEY not found");
+
+  console.log('[TTS] Generating CAMB.AI speech...');
+
+  // Note: CAMB.AI typically requires a two-step process: initiate and then poll/fetch.
+  // 1. Initiate TTS
+  const response = await fetch('https://api.camb.ai/v1/tts', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      text: text,
+      voice_id: 8872, // Example high-quality Burmese male voice ID (may need adjustment)
+      language: 104,  // Burmese (Myanmar) language code
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.message || `CAMB.AI API Error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const taskId = data.task_id;
+
+  // 2. Poll for completion
+  let attempts = 0;
+  while (attempts < 30) {
+    await new Promise(r => setTimeout(r, 2000)); // Wait 2 seconds between polls
+    const checkRes = await fetch(`https://api.camb.ai/v1/tts/${taskId}`, {
+      headers: { 'x-api-key': apiKey }
+    });
+
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.status === 'SUCCESS' && checkData.run_url) {
+        const audioRes = await fetch(checkData.run_url);
+        const blob = await audioRes.blob();
+        return URL.createObjectURL(blob);
+      } else if (checkData.status === 'FAILED') {
+        throw new Error("CAMB.AI task failed");
+      }
+    }
+    attempts++;
+  }
+  throw new Error("CAMB.AI timed out");
+};
+
 export const generateSpeech = async (
   text: string,
   strategy: GenerationStrategy = 'smart',
@@ -322,11 +374,23 @@ export const generateSpeech = async (
   // }
 
   // 2. Generation Step
-  // WORKAROUND: Skip Gemini entirely and use edge-tts directly
   console.log(`[TTS] Generating ${language} speech for:`, text.slice(0, 50));
 
   if (language === 'my') {
-    // Myanmar: Use edge-tts as primary
+    // Burmese: Smart strategy prioritizes CAMB.AI
+    if (strategy === 'smart' || strategy === 'force-camb') {
+      console.log('[TTS] Trying CAMB.AI for Pro Burmese...');
+      try {
+        const result = await generateCambSpeech(textToSpeak);
+        console.log('✅ [TTS] CAMB.AI succeeded!');
+        return { data: result, source: 'camb' };
+      } catch (cambErr) {
+        console.warn('⚠️ [TTS] CAMB.AI failed, falling back to edge-tts:', cambErr);
+        // Silent fallback to edge-tts
+      }
+    }
+
+    // Myanmar: edge-tts as primary/fallback
     console.log('[TTS] Trying edge-tts for Myanmar...');
     try {
       const result = await generateEdgeTTS(textToSpeak, 'my');
